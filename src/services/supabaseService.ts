@@ -22,7 +22,7 @@ export class SupabaseService {
       .filter((image) => image.resource_type === "image")
       .map((image) => ({
         id: image.id,
-        url: image.url,
+        imageUrl: image.resource_url,
         description: image.description,
       }));
 
