@@ -38,4 +38,17 @@ router.post(
   }
 );
 
+router.get("/search-images", async (req, res) => {
+  const { query } = req.query;
+  if (!query || typeof query !== "string" || !query.trim()) {
+    return res.status(400).json({ error: "Search query is required" });
+  }
+  try {
+    const results = await resourceProcessingController.searchImages(query);
+    res.json({ success: true, data: results });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 export default router;

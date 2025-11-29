@@ -43,6 +43,11 @@ class ResourceProcessingController {
     const images = await this.supabaseService.getImages();
     return images;
   }
+
+  async searchImages(query: string) {
+    const results = await this.resourceProcessingService.searchImages({query});
+    return results;
+  }
 }
 
 export default ResourceProcessingController;

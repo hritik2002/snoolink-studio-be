@@ -37,4 +37,9 @@ export class ResourceProcessingService {
       },
     });
   }
+
+  async searchImages({ query, topK = 5 }: { query: string; topK?: number }) {
+    const results = await this.db.query({ query, topK });
+    return results;
+  }
 }
