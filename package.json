@@ -2,11 +2,11 @@
     "name": "snoolink.studio",
     "version": "1.0.0",
     "description": "Backend service for Snoolink.studio",
-    "main": "src/server.js",
+    "main": "src/server.ts",
     "type": "module",
     "scripts": {
-        "start": "node src/server.js",
-        "dev": "nodemon src/server.js",
+        "start": "tsx src/server.ts",
+        "dev": "tsx watch src/server.ts",
         "test": "echo \"Error: no test specified\" && exit 1"
     },
     "keywords": [
@@ -18,6 +18,7 @@
     "author": "hritik.sharma",
     "license": "MIT",
     "dependencies": {
+        "@hritik2002/local-vectordb": "^1.0.5",
         "@supabase/supabase-js": "^2.56.0",
         "axios": "^1.11.0",
         "cloudinary": "^2.7.0",
@@ -25,9 +26,15 @@
         "dotenv": "^16.3.1",
         "express": "^4.18.2",
         "multer": "^1.4.5-lts.1",
-        "twelvelabs-js": "*"
+        "ollama": "^0.6.3",
+        "openai": "^6.9.1",
+        "ts-node": "*",
+        "tsx": "^4.20.6",
+        "twelvelabs-js": "*",
+        "typescript": "*"
     },
     "devDependencies": {
+        "@types/multer": "^2.0.0",
         "nodemon": "^3.0.1"
     },
     "engines": {

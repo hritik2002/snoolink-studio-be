@@ -3,3 +3,4 @@ node_modules
 package-lock.json
 bulk-upload-videos
 yarn.lock
+/vdb
