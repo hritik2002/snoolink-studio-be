@@ -1,0 +1,12 @@
+node_modules
+.vscode
+.idea
+*.log
+.env
+.env.local
+uploads/*
+vdb/*
+*.md
+.git
+.gitignore
+
