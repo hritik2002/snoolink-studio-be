@@ -1,20 +1,12 @@
-import uploadToCloudinary from "./cloudinary.service";
+import { EXPAND_QUERY_SYSTEM_PROMPT } from "../utils/constants";
 import { LLMServices } from "./llm.service";
-import { VectorDB } from "@hritik2002/local-vectordb";
+import { VectorDBService } from "./vectordb.service";
 
 export class ResourceProcessingService {
-  private db: VectorDB;
+  private db: VectorDBService;
   private llmClient: LLMServices;
   constructor() {
-    this.db = new VectorDB({
-      dir: "./vdb",
-      storeName: "images",
-      embedderConfig: {
-        type: "openai",
-        apiKey: process.env.OPENAI_API_KEY,
-        model: "text-embedding-3-small",
-      },
-    });
+    this.db = new VectorDBService();
 
     this.llmClient = new LLMServices();
   }
@@ -30,16 +22,26 @@ export class ResourceProcessingService {
     description: string;
     imageUrl: string;
   }): Promise<string> {
-    return this.db.upsert(description, {
-      metadata: {
-        imageUrl,
-        description,
-      },
+    const id = await this.db.upsert(description, {
+      imageUrl,
+      description,
     });
+    return id ?? "";
   }
 
   async searchImages({ query, topK = 5 }: { query: string; topK?: number }) {
-    const results = await this.db.query({ query, topK });
+    const results = await this.db.query(query, topK).then((res) =>
+      res.matches.map((m) => ({
+        id: m.id,
+        score: m.score,
+        text: m.metadata?.description ?? "",
+        imageUrl: m.metadata?.imageUrl ?? "",
+      }))
+    );
     return results;
+  }
+
+  async expandQuery(query: string): Promise<string> {
+    return this.llmClient.ask(query, EXPAND_QUERY_SYSTEM_PROMPT);
   }
 }

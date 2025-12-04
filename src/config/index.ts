@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 export const CONFIG = {
-  port: process.env.PORT || 3000,
+  port: process.env.PORT || 3001,
   supabase: {
     supabaseUrl: process.env.SUPABASE_URL || "",
     supabaseKey: process.env.SUPABASE_KEY || "",
@@ -25,14 +25,17 @@ export const CONFIG = {
       },
     },
   },
-  vlm: {
-    provider: "ollama",
-    model: "llava",
-    config: {},
-  },
   embedding: {
     provider: "openai",
     model: "text-embedding-3-small",
     config: {},
+  },
+  pinecone: {
+    apiKey: process.env.PINECONE_API_KEY ?? "",
+    index: process.env.PINECONE_INDEX ?? "snoolink",
+    namespace: process.env.PINECONE_NAMESPACE ?? "images",
+  },
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY ?? "",
   },
 };

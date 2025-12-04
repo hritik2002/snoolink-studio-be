@@ -1,5 +1,5 @@
 import { OpenAI } from "openai";
-import ollama from "ollama";
+import { DESCRIBE_IMAGE_SYSTEM_PROMPT } from "../utils/constants";
 
 export class LLMServices {
   private openaiClient: OpenAI;
@@ -12,21 +12,47 @@ export class LLMServices {
 
   async describeImage(imageUrl: string): Promise<string> {
     try {
-      const response = await ollama.chat({
-        model: "llava",
+      const response = await this.openaiClient.chat.completions.create({
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "user",
-            content: "Describe this image in detail in plain text.",
-            images: [imageUrl],
+            content: [
+              {
+                type: "text",
+                text: DESCRIBE_IMAGE_SYSTEM_PROMPT,
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: imageUrl,
+                },
+              },
+            ],
           },
         ],
       });
-      const description = response.message.content.trim();
-      return description;
+
+      return response.choices[0]?.message.content?.trim() || "";
     } catch (error) {
       console.error("Error describing image", error);
       throw error;
     }
+  }
+  async ask(query: string, systemPrompt: string): Promise<string> {
+    const response = await this.openaiClient.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt,
+        },
+        {
+          role: "user",
+          content: query,
+        },
+      ],
+    });
+    return response.choices[0]?.message.content?.trim() || "";
   }
 }

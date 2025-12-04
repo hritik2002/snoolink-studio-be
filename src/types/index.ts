@@ -11,7 +11,7 @@ export type VectorDBConfig = {
 };
 
 export type VLMConfig = {
-  provider: "ollama" | "openai" | "dashscope";
+  provider: "openai" | "dashscope";
   model: "llava" | "gpt-4-vision" | "qwen-vl-plus";
   config: {};
 };

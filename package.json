@@ -19,6 +19,7 @@
     "license": "MIT",
     "dependencies": {
         "@hritik2002/local-vectordb": "^1.0.5",
+        "@pinecone-database/pinecone": "^6.1.3",
         "@supabase/supabase-js": "^2.56.0",
         "axios": "^1.11.0",
         "cloudinary": "^2.7.0",
@@ -26,12 +27,12 @@
         "dotenv": "^16.3.1",
         "express": "^4.18.2",
         "multer": "^1.4.5-lts.1",
-        "ollama": "^0.6.3",
         "openai": "^6.9.1",
         "ts-node": "*",
         "tsx": "^4.20.6",
         "twelvelabs-js": "*",
-        "typescript": "*"
+        "typescript": "*",
+        "uuid": "^13.0.0"
     },
     "devDependencies": {
         "@types/multer": "^2.0.0",
