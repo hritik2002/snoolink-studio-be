@@ -1,5 +1,10 @@
 import dotenv from "dotenv";
-dotenv.config();
+
+// Only load .env file in development (when file exists)
+// In production (Railway, etc.), environment variables are injected by the platform
+if (process.env.NODE_ENV !== "production") {
+  dotenv.config();
+}
 
 // Validate required environment variables
 const supabaseUrl = process.env.SUPABASE_URL;
