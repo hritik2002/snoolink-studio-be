@@ -1,0 +1,12 @@
+[phases.setup]
+nixPkgs = ["nodejs-20_x", "python3", "gcc"]
+
+[phases.install]
+cmds = ["npm ci --omit=dev"]
+
+[phases.build]
+cmds = ["echo 'No build step needed'"]
+
+[start]
+cmd = "npm start"
+
