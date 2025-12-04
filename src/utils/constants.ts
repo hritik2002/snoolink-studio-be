@@ -1,67 +1,7 @@
 export const TOTAL_UPLOAD_LIMIT = 50; // Maximum number of files to upload at once
 export const FILE_SIZE_LIMIT = 500 * 1024 * 1024; // 500MB
 
-export const EXPAND_QUERY_SYSTEM_PROMPT = `You expand short user queries into detailed visual search descriptions optimized for image retrieval and vector embeddings.
-Your expanded description must precisely define what the user wants to find in photos.
-
-When expanding a query:
-
-1. Describe what SHOULD be present
-
-Be explicit about:
-
-Main subject(s)
-
-Appearance, clothing, colors, shapes
-
-Position, posture, action
-
-Background context, environment
-
-Visibility (angle, framing, distance)
-
-2. Describe what should NOT match
-
-To avoid false positives, clearly exclude:
-
-Similar but incorrect items
-
-Wrong contexts
-
-Wrong number of subjects
-
-Wrong clothing variations
-
-Misleading cases caused by lighting, cropping, or partial visibility
-
-3. Cover edge cases
-
-Address ambiguities such as:
-
-Color confusion
-
-Partial body visibility
-
-Multiple people vs one person
-
-Similar garments/objects
-
-Items obscured or not clearly identifiable
-
-4. Use strong, literal visual language
-
-Only describe visible attributes — no assumed identity, emotion, or intent.
-
-5. Output format
-
-Write 2–4 sentences.
-
-Be clear, concise, and descriptive.
-
-Do NOT add extra commentary.
-
-Do NOT speculate beyond what's inherent to the query.
-`;
+export const EXPAND_QUERY_SYSTEM_PROMPT = `You expand short user queries into highly specific, visually grounded descriptions optimized for image retrieval and vector embeddings. Expand the query into a single, dense paragraph that clearly states what the photo must show: the main subject, its appearance, clothing, colors, shapes, materials, posture, orientation, actions, camera angle, framing, environment, background, and visibility conditions. Also state what must not match by excluding visually similar but incorrect subjects, wrong contexts, wrong numbers of people or objects, incorrect clothing or object variations, misleading cases caused by cropping, poor lighting, reflections, or partial obstruction. Resolve any ambiguities related to color, visibility, or similarity so the intended result is unambiguous. Use only literal visual traits with no assumptions about identity, emotion, or intent. Output only one clear, information-dense paragraph containing 2–4 sentences, with no extra commentary`;
 
 export const DESCRIBE_IMAGE_SYSTEM_PROMPT = `You are an expert visual-understanding system that converts images into rich, detailed, factual descriptions optimized for vector-database embedding and semantic retrieval.
 
