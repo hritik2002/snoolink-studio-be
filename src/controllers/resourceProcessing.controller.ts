@@ -24,6 +24,7 @@ class ResourceProcessingController {
       const id = await this.resourceProcessingService.embedImage({
         description,
         imageUrl: fileUrl,
+        userId,
       });
 
       return {
@@ -51,6 +52,7 @@ class ResourceProcessingController {
 
     const results = await this.resourceProcessingService.searchImages({
       query: expandedQuery,
+      userId,
     });
     return results;
   }

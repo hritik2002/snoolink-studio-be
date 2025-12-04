@@ -7,7 +7,6 @@ const router = Router();
 router.use(optionalAuth);
 
 router.get("/me", (req: Request, res: Response) => {
-  console.log("req.user", req.user);
   if (req.user) {
     return res.json({
       success: true,

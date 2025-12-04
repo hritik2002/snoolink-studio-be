@@ -9,7 +9,6 @@ export class SupabaseService {
         this.supabaseClient = createClient(CONFIG.supabase.supabaseUrl, CONFIG.supabase.supabaseKey);
     }
     async getImages(userId) {
-        console.log("Getting images for user:", userId);
         const { data, error } = await this.supabaseClient
             .from("resource_table")
             .select("*")

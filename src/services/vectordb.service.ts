@@ -6,7 +6,9 @@ import { v4 as uuidv4 } from "uuid";
 export class VectorDBService {
   private db: Pinecone;
   private openaiClient: OpenAI;
-  constructor() {
+  private namespace: string;
+  constructor(namespace: string) {
+    this.namespace = namespace;
     this.db = new Pinecone({
       apiKey: CONFIG.pinecone.apiKey,
     });
@@ -15,12 +17,12 @@ export class VectorDBService {
     });
   }
 
-  async upsert(text: string, metadata: Record<string, any>) {
+  async upsert(text: string, metadata: Record<string, string | number | boolean | string[]>) {
     const embedding = await this.embed(text);
     const id = uuidv4();
     await this.db
       .index(CONFIG.pinecone.index)
-      .namespace(CONFIG.pinecone.namespace)
+      .namespace(this.namespace)
       .upsert([
         {
           id,
@@ -29,7 +31,7 @@ export class VectorDBService {
         },
       ]);
 
-      return id;
+    return id;
   }
 
   async embed(text: string) {
@@ -44,7 +46,7 @@ export class VectorDBService {
     const embedding = await this.embed(text);
     const result = await this.db
       .index(CONFIG.pinecone.index)
-      .namespace(CONFIG.pinecone.namespace)
+      .namespace(this.namespace)
       .query({
         vector: embedding,
         topK,

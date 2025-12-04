@@ -4,9 +4,6 @@ import { CONFIG } from "../config";
 export class SupabaseService {
   private supabaseClient: SupabaseClient;
   constructor() {
-    console.log("CONFIG.supabase.supabaseUrl, CONFIG.supabase.supabaseKey", {
-      ...CONFIG.supabase,
-    });
     this.supabaseClient = createClient(
       CONFIG.supabase.supabaseUrl,
       CONFIG.supabase.supabaseKey
@@ -14,7 +11,6 @@ export class SupabaseService {
   }
 
   async getImages(userId: string) {
-    console.log("Getting images for user:", userId);
     const { data, error } = await this.supabaseClient
       .from("resource_table")
       .select("*")
@@ -50,7 +46,6 @@ export class SupabaseService {
   }
 
   async getProfile(userId: string) {
-    // Try to get from profiles table first
     const { data: profileData, error: profileError } = await this.supabaseClient
       .from("profiles")
       .select("*")
@@ -65,8 +60,6 @@ export class SupabaseService {
       };
     }
 
-    // If profiles table doesn't exist or no data, get from auth.users
-    // Using admin API with service role key
     try {
       const { data: userData, error: userError } =
         await this.supabaseClient.auth.admin.getUserById(userId);
@@ -79,7 +72,6 @@ export class SupabaseService {
         email: userData.user.email || null,
       };
     } catch (error) {
-      // If admin API fails, return basic info
       return {
         id: userId,
         name: null,
@@ -92,7 +84,6 @@ export class SupabaseService {
     userId: string,
     profileData: { name?: string; email?: string }
   ) {
-    // Try to upsert in profiles table first
     const { data: profileTableData, error: profileError } =
       await this.supabaseClient
         .from("profiles")
@@ -112,7 +103,6 @@ export class SupabaseService {
       return profileTableData;
     }
 
-    // Fallback: update user metadata using admin API
     try {
       const { data: updateData, error: updateError } =
         await this.supabaseClient.auth.admin.updateUserById(userId, {
