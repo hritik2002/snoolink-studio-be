@@ -1,11 +1,28 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+// Validate required environment variables
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
+
+if (!supabaseUrl) {
+  console.error("SUPABASE_URL is required", supabaseUrl);
+  throw new Error("SUPABASE_URL is required. Please set it in your .env file.");
+}
+
+if (!supabaseKey) {
+  console.error("SUPABASE_KEY is required", supabaseKey);
+  throw new Error(
+    "SUPABASE_KEY is required. Please set it in your .env file. " +
+      "This should be the SERVICE ROLE key from Supabase Dashboard → Settings → API"
+  );
+}
+
 export const CONFIG = {
   port: process.env.PORT || 3001,
   supabase: {
-    supabaseUrl: process.env.SUPABASE_URL || "",
-    supabaseKey: process.env.SUPABASE_KEY || "",
+    supabaseUrl,
+    supabaseKey,
   },
   cloudinary: {
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "",
