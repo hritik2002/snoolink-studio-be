@@ -27,19 +27,18 @@ router.post(
       return res.status(400).json({ error: "No image files provided" });
     }
     try {
-      const results = await resourceProcessingController.upsertImages(
+      const queueResult = await resourceProcessingController.queueImages(
         files,
         req.user!.id
       );
 
       res.json({
         success: true,
-        data: results,
+        message: "Images queued for processing",
+        data: queueResult,
       });
     } catch (error: any) {
       res.status(500).json({ success: false, error: error.message });
-    } finally {
-      uploadsService.deleteUploadedFiles(files);
     }
   }
 );
@@ -55,6 +54,31 @@ router.get("/search-images", async (req, res) => {
       req.user!.id
     );
     res.json({ success: true, data: results });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get("/job-status/:jobId", async (req, res) => {
+  const { jobId } = req.params;
+  try {
+    const status = await resourceProcessingController.getJobStatus(jobId);
+    if (!status) {
+      return res.status(404).json({
+        success: false,
+        error: "Job not found",
+      });
+    }
+    res.json({ success: true, data: status });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get("/queue-stats", async (req, res) => {
+  try {
+    const stats = await resourceProcessingController.getQueueStats();
+    res.json({ success: true, data: stats });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

@@ -60,4 +60,26 @@ export const CONFIG = {
   openai: {
     apiKey: process.env.OPENAI_API_KEY ?? "",
   },
+  redis: {
+    host: process.env.REDIS_HOST ?? "",
+    port: parseInt(process.env.REDIS_PORT ?? "0", 10),
+    username: process.env.REDIS_USERNAME ?? "",
+    password: process.env.REDIS_PASSWORD ?? "",
+    db: parseInt(process.env.REDIS_DB ?? "0", 10),
+    maxRetriesPerRequest: null, // required for BullMQ
+    tls: process.env.REDIS_TLS === "true" ? {} : undefined, // Redis Cloud requires TLS
+  },
+  queue: {
+    imageProcessing: {
+      concurrency: parseInt(
+        process.env.IMAGE_PROCESSING_CONCURRENCY || "10",
+        10
+      ),
+      attempts: parseInt(process.env.IMAGE_PROCESSING_ATTEMPTS || "3", 10),
+      backoff: {
+        type: "exponential" as const,
+        delay: 2000,
+      },
+    },
+  },
 };
