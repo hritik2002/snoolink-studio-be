@@ -10,14 +10,15 @@ class RedisService {
         host: CONFIG.redis.host,
         port: CONFIG.redis.port,
         db: CONFIG.redis.db,
-        maxRetriesPerRequest: null, // Required for BullMQ
-        retryStrategy: (times: number) => {
-          const delay = Math.min(times * 50, 2000);
-          return delay;
-        },
-        maxmemoryPolicy: "noeviction",
         username: CONFIG.redis.username,
         password: CONFIG.redis.password,
+
+        // Required for BullMQ
+        maxRetriesPerRequest: null,
+
+        retryStrategy: (times: number) => Math.min(times * 50, 2000),
+
+        // TLS required for Redis Cloud
         tls: {
           rejectUnauthorized: false,
         },
