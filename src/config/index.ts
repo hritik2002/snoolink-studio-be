@@ -67,7 +67,10 @@ export const CONFIG = {
     password: process.env.REDIS_PASSWORD ?? "",
     db: parseInt(process.env.REDIS_DB ?? "0", 10),
     maxRetriesPerRequest: null, // required for BullMQ
-    tls: {},
+    tls: {
+      rejectUnauthorized: false,
+      minVersion: "TLSv1.2",
+    }
   },
   queue: {
     imageProcessing: {
