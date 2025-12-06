@@ -15,18 +15,13 @@ class RedisService {
           const delay = Math.min(times * 50, 2000);
           return delay;
         },
+        maxmemoryPolicy: "noeviction",
+        username: CONFIG.redis.username,
+        password: CONFIG.redis.password,
+        tls: {
+          rejectUnauthorized: false,
+        },
       };
-
-      // Add optional configs
-      if (CONFIG.redis.username) {
-        redisConfig.username = CONFIG.redis.username;
-      }
-      if (CONFIG.redis.password) {
-        redisConfig.password = CONFIG.redis.password;
-      }
-      if (CONFIG.redis.tls) {
-        redisConfig.tls = CONFIG.redis.tls;
-      }
 
       this.client = new Redis(redisConfig);
 
