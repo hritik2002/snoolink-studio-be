@@ -42,7 +42,13 @@ export class UploadsService {
 
     return multer({
       storage,
-      limits: { fileSize: FILE_SIZE_LIMIT }, // 500MB
+      limits: {
+        fileSize: FILE_SIZE_LIMIT, // 500MB per file
+        fieldSize: 10 * 1024 * 1024, // 10MB for field values
+        fields: 20, // Maximum number of non-file fields
+        files: 50, // Maximum number of file fields
+        parts: 100, // Maximum number of parts (fields + files)
+      },
     });
   }
 
