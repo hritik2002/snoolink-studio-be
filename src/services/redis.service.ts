@@ -9,18 +9,15 @@ class RedisService {
       const redisConfig: any = {
         host: CONFIG.redis.host,
         port: CONFIG.redis.port,
-        db: CONFIG.redis.db,
         username: CONFIG.redis.username,
         password: CONFIG.redis.password,
-
-        // Required for BullMQ
+        db: CONFIG.redis.db,
         maxRetriesPerRequest: null,
-
         retryStrategy: (times: number) => Math.min(times * 50, 2000),
 
-        // TLS required for Redis Cloud
         tls: {
           rejectUnauthorized: false,
+          minVersion: "TLSv1.2",
         },
       };
 
