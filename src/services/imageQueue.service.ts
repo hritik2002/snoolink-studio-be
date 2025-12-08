@@ -1,9 +1,9 @@
 import { Queue } from "bullmq";
 import { redisService } from "./redis.service";
+import { v4 as uuidv4 } from "uuid";
 
 export interface ImageJobData {
-  filePath: string;
-  originalName: string;
+  imageUrl: string;
   userId: string;
   jobId: string;
 }
@@ -37,7 +37,7 @@ class ImageQueueService {
 
   async addImageJob(data: ImageJobData) {
     const job = await this.queue.add("process-image", data, {
-      jobId: `${data.jobId}-${data.originalName}`,
+      jobId: `${data.jobId}-${uuidv4()}`,
     });
     return job;
   }
@@ -47,8 +47,8 @@ class ImageQueueService {
       name: "process-image",
       data,
       opts: {
-        jobId: `${data.jobId}-${data.originalName}`,
-      },
+        jobId: `${data.jobId}-${uuidv4()}`,
+      },  
     }));
 
     return await this.queue.addBulk(bullJobs);

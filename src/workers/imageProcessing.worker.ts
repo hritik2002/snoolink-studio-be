@@ -42,10 +42,7 @@ class ImageProcessingWorker {
     });
 
     this.worker.on("failed", (job, err) => {
-      console.error(
-        `❌ Image processing failed: ${job?.id}`,
-        err.message
-      );
+      console.error(`❌ Image processing failed: ${job?.id}`, err.message);
     });
 
     this.worker.on("error", (err) => {
@@ -58,62 +55,38 @@ class ImageProcessingWorker {
   }
 
   private async processImage(job: Job<ImageJobData>) {
-    const { filePath, originalName, userId, jobId } = job.data;
+    const { imageUrl, userId, jobId } = job.data;
 
     try {
-      // Update job progress
-      await job.updateProgress(10);
-
-      // Upload file to Cloudinary
-      const { fileUrl } = await this.uploadsService.handleFileUpload(
-        filePath,
-        "image"
-      );
-      await job.updateProgress(30);
-
-      // Clean up local file after upload
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-
-      // Get image description from LLM
       const description = await this.resourceProcessingService.describeImage(
-        fileUrl
+        imageUrl
       );
-      await job.updateProgress(60);
 
       // Embed image in vector database
       const id = await this.resourceProcessingService.embedImage({
         description,
-        imageUrl: fileUrl,
+        imageUrl,
         userId,
       });
-      await job.updateProgress(90);
 
-      // Store in Supabase (optional - uncomment if needed)
-      await this.supabaseService.postImages([{ id, description, imageUrl: fileUrl }], userId);
-
-      await job.updateProgress(100);
+      await this.supabaseService.postImages(
+        [{ id, description, imageUrl }],
+        userId
+      );
 
       return {
         success: true,
         id,
         description,
-        imageUrl: fileUrl,
-        originalName,
+        imageUrl,
       };
     } catch (error: any) {
-      // Update job progress to indicate failure
-      await job.updateProgress(0);
-
       throw new Error(
-        `Failed to process image ${originalName}: ${error?.message || "Unknown error"}`
+        `Failed to process image ${imageUrl}: ${
+          error?.message || "Unknown error"
+        }`
       );
-    } finally {
-        if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-          }
-        }
+    }
   }
 
   async close() {
@@ -136,4 +109,3 @@ process.on("SIGINT", async () => {
   await imageProcessingWorker.close();
   process.exit(0);
 });
-

@@ -1,14 +1,9 @@
-// TODO: Implement media routes
 import { Router } from "express";
-import { UploadsService } from "../services/uploads.service.ts";
-import { TOTAL_UPLOAD_LIMIT } from "../utils/constants.js";
-import ResourceProcessingController from "../controllers/resourceProcessing.controller.ts";
-import { authenticateUser } from "../middleware/auth.middleware.ts";
+import ResourceProcessingController from "../controllers/resourceProcessing.controller.js";
+import { authenticateUser } from "../middleware/auth.middleware.js";
 
 const router = Router();
 const resourceProcessingController = new ResourceProcessingController();
-const uploadsService = new UploadsService();
-const upload = uploadsService.getUpload();
 
 router.use(authenticateUser);
 
@@ -17,31 +12,24 @@ router.get("/get-all-images", async (req, res) => {
   res.json({ success: true, data: results });
 });
 
-router.post(
-  "/upload-images",
-  upload.fields([{ name: "images", maxCount: TOTAL_UPLOAD_LIMIT }]),
-  async (req, res) => {
-    const files =
-      (req.files as { images?: Express.Multer.File[] }).images ?? [];
-    if (!files || files.length === 0) {
-      return res.status(400).json({ error: "No image files provided" });
-    }
-    try {
-      const queueResult = await resourceProcessingController.queueImages(
-        files,
-        req.user!.id
-      );
+router.post("/upload-images", async (req, res) => {
+  try {
+    const { urls } = await req.body;
 
-      res.json({
-        success: true,
-        message: "Images queued for processing",
-        data: queueResult,
-      });
-    } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
-    }
+    const queueResult = await resourceProcessingController.queueImages(
+      urls as string[],
+      req.user!.id
+    );
+
+    res.json({
+      success: true,
+      message: "Images queued for processing",
+      data: queueResult,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
   }
-);
+});
 
 router.get("/search-images", async (req, res) => {
   const { query } = req.query;

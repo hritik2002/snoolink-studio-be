@@ -86,9 +86,6 @@ class ResourceProcessingController {
     const successful = processedResults.filter((r) => r.success);
     const failed = processedResults.filter((r) => !r.success);
 
-    console.log(
-      `Processed ${imagePaths.length} images: ${successful.length} successful, ${failed.length} failed`
-    );
     if (failed.length > 0) {
       console.error("Failed images:", failed);
     }
@@ -122,13 +119,12 @@ class ResourceProcessingController {
   }
 
   async queueImages(
-    imagePaths: Express.Multer.File[],
+    imageUrls: string[],
     userId: string
   ): Promise<{ jobId: string; totalImages: number; queuedJobs: string[] }> {
     const jobId = uuidv4();
-    const jobs = imagePaths.map((image) => ({
-      filePath: image.path,
-      originalName: image.originalname || image.filename || "unknown",
+    const jobs = imageUrls.map((imageUrl) => ({
+      imageUrl,
       userId,
       jobId,
     }));
@@ -137,7 +133,7 @@ class ResourceProcessingController {
 
     return {
       jobId,
-      totalImages: imagePaths.length,
+      totalImages: imageUrls.length,
       queuedJobs: queuedJobs.map((job) => job.id || ""),
     };
   }
