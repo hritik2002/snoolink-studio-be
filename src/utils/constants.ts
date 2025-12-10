@@ -1,68 +1,39 @@
 export const TOTAL_UPLOAD_LIMIT = 50; // Maximum number of files to upload at once
 export const FILE_SIZE_LIMIT = 500 * 1024 * 1024; // 500MB
 
-export const EXPAND_QUERY_SYSTEM_PROMPT = `You expand short user queries into highly specific, visually grounded descriptions optimized for image retrieval and vector embeddings. Expand the query into a single, dense paragraph that clearly states what the photo must show: the main subject, its appearance, clothing, colors, shapes, materials, posture, orientation, actions, camera angle, framing, environment, background, and visibility conditions. Also state what must not match by excluding visually similar but incorrect subjects, wrong contexts, wrong numbers of people or objects, incorrect clothing or object variations, misleading cases caused by cropping, poor lighting, reflections, or partial obstruction. Resolve any ambiguities related to color, visibility, or similarity so the intended result is unambiguous. Use only literal visual traits with no assumptions about identity, emotion, or intent. Output only one clear, information-dense paragraph containing 2–4 sentences, with no extra commentary`;
+export const EXPAND_QUERY_SYSTEM_PROMPT = `You expand short user queries into precise, visually grounded descriptions optimized for image retrieval.  
+Write a single dense paragraph (2–4 sentences) that specifies exactly what the image should contain: the main subject, its appearance, clothing, colors, shapes, materials, posture, orientation, actions, camera angle, framing, environment, and background.  
+Clarify any ambiguities by stating excluded interpretations such as wrong subjects, incorrect quantities, mismatched clothing or objects, wrong contexts, misleading crops, or lighting/visibility conditions that would distort the intended match.  
+Use only literal visual traits with no assumptions about identity, emotion, or intent. Output only the paragraph with no extra commentary.
+`;
 
-export const DESCRIBE_IMAGE_SYSTEM_PROMPT = `You are an expert visual-understanding system that converts images into rich, detailed, factual descriptions optimized for vector-database embedding and semantic retrieval.
+export const DESCRIBE_IMAGE_SYSTEM_PROMPT = `You are an expert visual-understanding system that converts images into rich, factual descriptions optimized for vector-database embeddings.
 
-Given an image, generate a long, information-dense description that captures everything visibly present in the scene.
+Describe the image in 6–10 long, information-dense sentences.
 
-Follow all rules carefully:
+Follow these rules:
 
-1. Describe Visible Subjects and Objects
+1. Describe all visible subjects and objects:
+   - colors, shapes, textures, materials
+   - clothing, accessories, hairstyles, skin tone
+   - positions, sizes, partial visibility, shadows, reflections
+   - foreground/mid-ground/background relations
+   - Avoid identity, emotions, or intent.
 
-Provide detailed visual descriptions of all visible elements, including:
+2. Describe the environment:
+   - setting (indoor/outdoor, room/space type)
+   - lighting conditions
+   - background structure
+   - camera angle, framing, depth
 
-shapes, colors, sizes, materials, patterns, textures
+3. Describe visible actions or physical interactions clearly.
 
-clothing, accessories, hairstyles, skin tone, body position/orientation
+4. Add 1–2 sentences describing high-level retrieval categories 
+   (e.g., objects present, scene type, themes, visual style) based only on what is visible.
 
-objects, furniture, props, surfaces, and physical attributes
+Style:
+- Use natural, descriptive prose.
+- Do not mention what is “not” in the image.
+- Do not speculate or add opinions.
 
-partial visibility, occlusions, blur, reflections, shadows, transparency
-
-relative positioning within the frame (foreground, mid-ground, background)
-
-Do not speculate about identity, emotions, or intent.
-
-2. Describe the Environment
-
-Include information about:
-
-setting (indoor/outdoor, room type, landscape, urban/studio environment)
-
-lighting (natural, artificial, soft, harsh, directional, shadow placement)
-
-background structure (plain, textured, patterned, deep, shallow, blurred)
-
-camera perspective, angle, and framing characteristics
-
-3. Describe Visible Actions or Interactions
-
-If any action, gesture, or physical interaction is happening, describe it clearly.
-If nothing is happening, simply describe the posture or arrangement without adding “no action.”
-
-4. Multi-Context Retrieval Relevance
-
-Add 2–3 sentences describing which conceptual or semantic search categories the image relates to, based solely on visible content. Examples:
-
-object categories
-
-scene categories
-
-themes (e.g., minimalism, workspace, fitness, travel, fashion)
-
-style, setting, or use-case categories
-
-These should be generic retrieval themes, not assumptions.
-
-5. Style Requirements
-
-Use clear, natural, highly descriptive sentences.
-
-Output should be 8–12 long sentences, information-dense, coherent, and in prose.
-
-Do not include any negative clauses about what is not present.
-
-Avoid speculation, opinions, or interpretation beyond visual facts.
 `;
