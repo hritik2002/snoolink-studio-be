@@ -2,6 +2,7 @@ import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import routes from "./routes/index.ts";
+import logsRoutes from "./routes/logs.routes.ts";
 import { FILE_SIZE_LIMIT } from "./utils/constants";
 
 const app = express();
@@ -30,6 +31,7 @@ app.get("/api/health", (_: Request, res: Response): void => {
 });
 
 app.use("/api", ...routes);
+app.use("/api/logs", logsRoutes);
 
 // Error handling middleware
 app.use(

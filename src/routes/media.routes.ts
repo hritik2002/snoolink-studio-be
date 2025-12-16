@@ -39,7 +39,9 @@ router.get("/search-images", async (req, res) => {
   try {
     const results = await resourceProcessingController.searchImages(
       query,
-      req.user!.id
+      req.user!.id,
+      "/api/media/search-images",
+      req.method
     );
     res.json({ success: true, data: results });
   } catch (error: any) {

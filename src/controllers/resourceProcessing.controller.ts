@@ -2,6 +2,7 @@ import { ResourceProcessingService } from "../services/resrouceProcessing.servic
 import { UploadsService } from "../services/uploads.service";
 import { SupabaseService } from "../services/supabaseService";
 import { imageQueueService } from "../services/imageQueue.service";
+import { loggingService } from "../services/logging.service";
 import { v4 as uuidv4 } from "uuid";
 
 class ResourceProcessingController {
@@ -106,16 +107,61 @@ class ResourceProcessingController {
     return images;
   }
 
-  async searchImages(query: string, userId: string) {
-    const expandedQuery = await this.resourceProcessingService
-      .expandQuery(`User Query: "${query}"
-        Expanded:`);
+  async searchImages(
+    query: string,
+    userId: string,
+    endpoint: string = "/api/media/search-images",
+    method: string = "GET"
+  ) {
+    const startTime = Date.now();
+    let expandedQuery: string | null = null;
+    let results: any = null;
+    let error: string | null = null;
 
-    const results = await this.resourceProcessingService.searchImages({
-      query: expandedQuery,
-      userId,
-    });
-    return results;
+    try {
+      expandedQuery = await this.resourceProcessingService.expandQuery(
+        `User Query: "${query}"
+        Expanded:`
+      );
+
+      results = await this.resourceProcessingService.searchImages({
+        query: expandedQuery,
+        userId,
+      });
+
+      const responseTime = Date.now() - startTime;
+
+      // Log the request asynchronously (fire-and-forget)
+      loggingService.logRequest({
+        user_id: userId,
+        user_query: query,
+        enhanced_query: expandedQuery,
+        response: results,
+        error: null,
+        endpoint,
+        method,
+        response_time_ms: responseTime,
+      });
+
+      return results;
+    } catch (err: any) {
+      error = err?.message || "Unknown error occurred";
+      const responseTime = Date.now() - startTime;
+
+      // Log the error asynchronously (fire-and-forget)
+      loggingService.logRequest({
+        user_id: userId,
+        user_query: query,
+        enhanced_query: expandedQuery,
+        response: null,
+        error: error,
+        endpoint,
+        method,
+        response_time_ms: responseTime,
+      });
+
+      throw err;
+    }
   }
 
   async queueImages(
