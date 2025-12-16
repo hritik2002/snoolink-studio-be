@@ -30,8 +30,10 @@ app.get("/api/health", (_: Request, res: Response): void => {
   });
 });
 
-app.use("/api", ...routes);
+// Mount logs routes first (before other routes) to ensure they're matched correctly
+// Logs routes are public and don't require authentication
 app.use("/api/logs", logsRoutes);
+app.use("/api", ...routes);
 
 // Error handling middleware
 app.use(

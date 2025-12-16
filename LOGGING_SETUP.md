@@ -61,6 +61,7 @@ Retrieve logs with optional filtering.
 - `offset` (optional, default: 0) - Pagination offset
 - `startDate` (optional) - Filter logs from this date (ISO 8601 format)
 - `endDate` (optional) - Filter logs until this date (ISO 8601 format)
+- `userId` (optional) - Filter logs by specific user ID
 
 **Example:**
 ```bash
@@ -99,6 +100,9 @@ GET /api/logs?limit=50&offset=0&startDate=2024-01-01T00:00:00Z
 
 Get aggregated statistics about logs.
 
+**Query Parameters:**
+- `userId` (optional) - Filter statistics by specific user ID
+
 **Response:**
 ```json
 {
@@ -113,7 +117,7 @@ Get aggregated statistics about logs.
 
 ## Authentication
 
-All log endpoints require authentication. Users can only see their own logs (filtered by `user_id`).
+**Log endpoints are publicly accessible** - no authentication required. You can optionally filter by `userId` as a query parameter to view logs for a specific user.
 
 ## Integration
 
