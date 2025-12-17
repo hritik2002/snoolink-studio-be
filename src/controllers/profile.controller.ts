@@ -21,6 +21,14 @@ class ProfileController {
     );
     return updatedProfile;
   }
+
+  /**
+   * Ensures user profile exists and is synced with auth data
+   * Called after OAuth login to store user data
+   */
+  async ensureProfile(userId: string) {
+    await this.supabaseService.ensureProfile(userId);
+  }
 }
 
 export default ProfileController;

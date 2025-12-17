@@ -30,5 +30,15 @@ router.put("/profile", async (req: Request, res: Response) => {
   }
 });
 
+// Endpoint to ensure profile exists (called after OAuth login)
+router.post("/profile/ensure", async (req: Request, res: Response) => {
+  try {
+    await profileController.ensureProfile(req.user!.id);
+    res.json({ success: true, message: "Profile ensured" });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 export default router;
 

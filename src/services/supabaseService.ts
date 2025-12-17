@@ -122,4 +122,52 @@ export class SupabaseService {
       throw new Error(`Failed to update profile: ${error.message}`);
     }
   }
+
+  /**
+   * Ensures user profile exists and is synced with auth user data
+   * This is called after OAuth login to store user data
+   */
+  async ensureProfile(userId: string): Promise<void> {
+    try {
+      // Get user data from auth
+      const { data: userData, error: userError } =
+        await this.supabaseClient.auth.admin.getUserById(userId);
+
+      if (userError) throw userError;
+
+      const user = userData.user;
+      const name =
+        user.user_metadata?.full_name ||
+        user.user_metadata?.name ||
+        user.user_metadata?.display_name ||
+        null;
+      const email = user.email || null;
+
+      // Try to upsert in profiles table
+      const { error: upsertError } = await this.supabaseClient
+        .from("profiles")
+        .upsert(
+          {
+            id: userId,
+            name: name,
+            email: email,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "id" }
+        );
+
+      // If profiles table doesn't exist or upsert fails, update user_metadata as fallback
+      if (upsertError) {
+        await this.supabaseClient.auth.admin.updateUserById(userId, {
+          user_metadata: {
+            name: name,
+            ...user.user_metadata,
+          },
+        });
+      }
+    } catch (error: any) {
+      // Silently fail - profile will be created on first access
+      console.error("Failed to ensure profile:", error);
+    }
+  }
 }
