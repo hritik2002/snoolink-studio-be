@@ -1,15 +1,19 @@
 import { Worker, Job } from "bullmq";
 import { redisService } from "../services/redis.service";
 import { VideoProcessingService } from "../services/videoProcessing.service";
+import { SupabaseService } from "../services/supabaseService";
 import { CONFIG } from "../config";
 import { VideoJobData } from "../services/videoQueue.service";
+import { v4 as uuidv4 } from "uuid";
 
 class VideoProcessingWorker {
   private worker: Worker<VideoJobData>;
   private videoProcessingService: VideoProcessingService;
+  private supabaseService: SupabaseService;
 
   constructor() {
     this.videoProcessingService = new VideoProcessingService();
+    this.supabaseService = new SupabaseService();
 
     this.worker = new Worker<VideoJobData>(
       "video-processing",
@@ -64,6 +68,30 @@ class VideoProcessingWorker {
         userId
       );
 
+      // Update progress: storing in Supabase
+      await job.updateProgress(90);
+
+      // Store video metadata in Supabase
+      // Generate a summary description from all chunk summaries
+      const summaryDescription = result.results
+        .map((r) => r.summary)
+        .join(" ")
+        .substring(0, 1000); // Limit description length
+
+      // Generate a unique video ID for the video entry
+      const videoId = uuidv4();
+
+      await this.supabaseService.postVideos(
+        [
+          {
+            id: videoId,
+            description: summaryDescription || "Video processed and indexed",
+            videoUrl,
+          },
+        ],
+        userId
+      );
+
       // Update progress: completed
       await job.updateProgress(100);
 
@@ -103,4 +131,6 @@ process.on("SIGINT", async () => {
   await videoProcessingWorker.close();
   process.exit(0);
 });
+
+
 

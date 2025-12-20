@@ -12,6 +12,11 @@ router.get("/get-all-images", async (req, res) => {
   res.json({ success: true, data: results });
 });
 
+router.get("/get-all-videos", async (req, res) => {
+  const results = await resourceProcessingController.getAllVideos(req.user!.id);
+  res.json({ success: true, data: results });
+});
+
 router.post("/upload-images", async (req, res) => {
   try {
     const { urls } = await req.body;

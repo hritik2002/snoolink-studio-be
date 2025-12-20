@@ -111,6 +111,11 @@ class ResourceProcessingController {
     return images;
   }
 
+  async getAllVideos(userId: string) {
+    const videos = await this.supabaseService.getVideos(userId);
+    return videos;
+  }
+
   async searchImages(
     query: string,
     userId: string,

@@ -45,6 +45,42 @@ export class SupabaseService {
     return data;
   }
 
+  async getVideos(userId: string) {
+    const { data, error } = await this.supabaseClient
+      .from("resource_table")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("resource_type", "video");
+    if (error) throw error;
+    const videos = data.map((video) => ({
+      id: video.id,
+      videoUrl: video.resource_url,
+      description: video.description,
+      createdAt: video.created_at,
+    }));
+
+    return videos;
+  }
+
+  async postVideos(
+    videos: { id: string; description: string; videoUrl: string }[],
+    userId: string
+  ): Promise<{ id: string }[] | null> {
+    const { data, error } = await this.supabaseClient
+      .from("resource_table")
+      .insert(
+        videos.map((video) => ({
+          resource_url: video.videoUrl,
+          description: video.description,
+          resource_type: "video",
+          user_id: userId,
+        }))
+      );
+    if (error) throw error;
+
+    return data;
+  }
+
   async getProfile(userId: string) {
     const { data: profileData, error: profileError } = await this.supabaseClient
       .from("profiles")
