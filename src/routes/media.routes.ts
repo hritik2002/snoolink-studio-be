@@ -1,4 +1,5 @@
 import { Router } from "express";
+import fs from "fs";
 import ResourceProcessingController from "../controllers/resourceProcessing.controller.js";
 import { authenticateUser } from "../middleware/auth.middleware.js";
 
@@ -140,6 +141,78 @@ router.get("/search-videos", async (req, res) => {
 
     res.json({ success: true, data: results });
   } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Download video segment
+router.get("/download-video-segment", async (req, res) => {
+  try {
+    const { videoUrl, startTime, endTime } = req.query;
+
+    if (!videoUrl || typeof videoUrl !== "string") {
+      return res.status(400).json({
+        success: false,
+        error: "Video URL is required",
+      });
+    }
+
+    if (!startTime || !endTime) {
+      return res.status(400).json({
+        success: false,
+        error: "Start time and end time are required",
+      });
+    }
+
+    const start = parseFloat(startTime as string);
+    const end = parseFloat(endTime as string);
+
+    if (isNaN(start) || isNaN(end) || start < 0 || end <= start) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid start time or end time",
+      });
+    }
+
+    // Extract video segment
+    const segmentPath = await resourceProcessingController.extractVideoSegment(
+      videoUrl,
+      start,
+      end
+    );
+
+    // Set headers for file download
+    const filename = `video-segment-${start.toFixed(2)}-${end.toFixed(2)}.mp4`;
+    res.setHeader("Content-Type", "video/mp4");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    // Stream the file
+    const fileStream = fs.createReadStream(segmentPath);
+    
+    fileStream.pipe(res);
+
+    // Clean up file after streaming
+    fileStream.on("end", () => {
+      try {
+        fs.unlinkSync(segmentPath);
+      } catch (error) {
+        console.error("Error deleting segment file:", error);
+      }
+    });
+
+    fileStream.on("error", (error: any) => {
+      console.error("Error streaming segment file:", error);
+      try {
+        fs.unlinkSync(segmentPath);
+      } catch (err) {
+        console.error("Error deleting segment file:", err);
+      }
+      if (!res.headersSent) {
+        res.status(500).json({ success: false, error: "Failed to stream video segment" });
+      }
+    });
+  } catch (error: any) {
+    console.error("Error downloading video segment:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

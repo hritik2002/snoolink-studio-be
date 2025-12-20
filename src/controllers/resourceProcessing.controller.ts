@@ -268,6 +268,21 @@ class ResourceProcessingController {
   }>> {
     return await this.videoProcessingService.searchVideos(query, userId, topK);
   }
+
+  /**
+   * Extract and return video segment file path for download
+   */
+  async extractVideoSegment(
+    videoUrl: string,
+    startTime: number,
+    endTime: number
+  ): Promise<string> {
+    return await this.videoProcessingService.extractVideoSegment(
+      videoUrl,
+      startTime,
+      endTime
+    );
+  }
 }
 
 export default ResourceProcessingController;

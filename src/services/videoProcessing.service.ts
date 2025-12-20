@@ -377,6 +377,45 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
       endTime: m.metadata?.endTime as string | undefined,
     }));
   }
+
+  /**
+   * Extract a video segment from startTime to endTime and return the file path
+   */
+  async extractVideoSegment(
+    videoUrl: string,
+    startTime: number,
+    endTime: number
+  ): Promise<string> {
+    // Download the video
+    const videoPath = await this.downloadVideo(videoUrl);
+
+    try {
+      // Calculate duration
+      const duration = endTime - startTime;
+
+      // Create output file path
+      const outputFile = path.join(this.tempDir, `segment_${uuidv4()}.mp4`);
+
+      // Extract segment using ffmpeg
+      await exec(
+        `ffmpeg -y -i "${videoPath}" -ss ${startTime} -t ${duration} -c copy "${outputFile}"`
+      );
+
+      // Verify the output file exists
+      if (!fs.existsSync(outputFile)) {
+        throw new Error("Failed to create video segment");
+      }
+
+      return outputFile;
+    } finally {
+      // Clean up downloaded video
+      try {
+        fs.unlinkSync(videoPath);
+      } catch (error) {
+        console.error("Error deleting downloaded video:", error);
+      }
+    }
+  }
 }
 
 
