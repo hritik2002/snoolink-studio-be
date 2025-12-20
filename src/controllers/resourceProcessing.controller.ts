@@ -2,17 +2,21 @@ import { ResourceProcessingService } from "../services/resrouceProcessing.servic
 import { UploadsService } from "../services/uploads.service";
 import { SupabaseService } from "../services/supabaseService";
 import { imageQueueService } from "../services/imageQueue.service";
+import { videoQueueService } from "../services/videoQueue.service";
 import { loggingService } from "../services/logging.service";
+import { VideoProcessingService } from "../services/videoProcessing.service";
 import { v4 as uuidv4 } from "uuid";
 
 class ResourceProcessingController {
   private resourceProcessingService: ResourceProcessingService;
   private uploadsService: UploadsService;
   private supabaseService: SupabaseService;
+  private videoProcessingService: VideoProcessingService;
   constructor() {
     this.resourceProcessingService = new ResourceProcessingService();
     this.uploadsService = new UploadsService();
     this.supabaseService = new SupabaseService();
+    this.videoProcessingService = new VideoProcessingService();
   }
 
   async upsertImages(imagePaths: Express.Multer.File[], userId: string) {
@@ -197,6 +201,67 @@ class ResourceProcessingController {
   async getQueueStats() {
     const counts = await imageQueueService.getJobCounts();
     return counts;
+  }
+
+  /**
+   * Queue a video for processing (async)
+   */
+  async queueVideo(videoUrl: string, userId: string): Promise<{ jobId: string }> {
+    const jobId = uuidv4();
+    const job = await videoQueueService.addVideoJob({
+      videoUrl,
+      userId,
+      jobId,
+    });
+
+    return {
+      jobId: job.id || jobId,
+    };
+  }
+
+  /**
+   * Get video processing job status
+   */
+  async getVideoJobStatus(jobId: string) {
+    const state = await videoQueueService.getJobState(jobId);
+    if (!state) {
+      return null;
+    }
+    return state;
+  }
+
+  /**
+   * Process and index a video from URL (synchronous - used by worker)
+   */
+  async processVideo(videoUrl: string, userId: string) {
+    try {
+      const result = await this.videoProcessingService.processAndIndexVideo(
+        videoUrl,
+        userId
+      );
+      return result;
+    } catch (error: any) {
+      console.error("Error processing video:", error);
+      throw new Error(`Failed to process video: ${error.message}`);
+    }
+  }
+
+  /**
+   * Search for video clips by text query
+   */
+  async searchVideos(
+    query: string,
+    userId: string,
+    topK: number = 5
+  ): Promise<Array<{
+    id: string;
+    score: number;
+    text: string;
+    videoUrl?: string;
+    startTime?: string;
+    endTime?: string;
+  }>> {
+    return await this.videoProcessingService.searchVideos(query, userId, topK);
   }
 }
 

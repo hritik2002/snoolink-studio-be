@@ -80,5 +80,16 @@ export const CONFIG = {
         delay: 2000,
       },
     },
+    videoProcessing: {
+      concurrency: parseInt(
+        process.env.VIDEO_PROCESSING_CONCURRENCY || "2",
+        10
+      ),
+      attempts: parseInt(process.env.VIDEO_PROCESSING_ATTEMPTS || "3", 10),
+      backoff: {
+        type: "exponential" as const,
+        delay: 5000, // Longer delay for videos as they take more time
+      },
+    },
   },
 };

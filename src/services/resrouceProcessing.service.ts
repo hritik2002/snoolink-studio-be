@@ -12,10 +12,10 @@ export class ResourceProcessingService {
     this.llmClient = new LLMServices();
   }
 
-  // Get or create VectorDBService for a specific user
+  // Get or create VectorDBService for a specific user (images namespace)
   private getVectorDB(userId: string): VectorDBService {
     if (!this.db || this.currentUserId !== userId) {
-      const namespace = createUserNamespace(userId);
+      const namespace = createUserNamespace(userId, "image");
       this.db = new VectorDBService(namespace);
       this.currentUserId = userId;
     }

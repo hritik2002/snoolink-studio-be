@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import routes from "./routes/index.ts";
 import logsRoutes from "./routes/logs.routes.ts";
+import mediaRoutes from "./routes/media.routes.ts";
 import { FILE_SIZE_LIMIT } from "./utils/constants";
 
 const app = express();
@@ -33,6 +34,9 @@ app.get("/api/health", (_: Request, res: Response): void => {
 // Mount logs routes first (before other routes) to ensure they're matched correctly
 // Logs routes are public and don't require authentication
 app.use("/api/logs", logsRoutes);
+// Mount media routes at /api/media
+app.use("/api/media", mediaRoutes);
+// Mount other routes at /api
 app.use("/api", ...routes);
 
 // Error handling middleware

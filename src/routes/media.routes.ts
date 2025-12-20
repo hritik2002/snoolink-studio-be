@@ -74,4 +74,69 @@ router.get("/queue-stats", async (req, res) => {
   }
 });
 
+// Video processing endpoints
+router.post("/process-video", async (req, res) => {
+  try {
+    const { videoUrl } = req.body;
+
+    if (!videoUrl || typeof videoUrl !== "string") {
+      return res.status(400).json({
+        success: false,
+        error: "Video URL is required",
+      });
+    }
+
+    // Queue the video for processing (async)
+    const { jobId } = await resourceProcessingController.queueVideo(
+      videoUrl,
+      req.user!.id
+    );
+
+    res.json({
+      success: true,
+      message: "Video queued for processing",
+      data: { jobId },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get video processing job status
+router.get("/video-job-status/:jobId", async (req, res) => {
+  const { jobId } = req.params;
+  try {
+    const status = await resourceProcessingController.getVideoJobStatus(jobId);
+    if (!status) {
+      return res.status(404).json({
+        success: false,
+        error: "Job not found",
+      });
+    }
+    res.json({ success: true, data: status });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get("/search-videos", async (req, res) => {
+  const { query, topK } = req.query;
+
+  if (!query || typeof query !== "string" || !query.trim()) {
+    return res.status(400).json({ error: "Search query is required" });
+  }
+
+  try {
+    const results = await resourceProcessingController.searchVideos(
+      query,
+      req.user!.id,
+      topK ? parseInt(topK as string, 10) : 5
+    );
+
+    res.json({ success: true, data: results });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 export default router;
