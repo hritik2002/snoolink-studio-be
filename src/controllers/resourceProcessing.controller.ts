@@ -209,6 +209,53 @@ class ResourceProcessingController {
   }
 
   /**
+   * Get image processing job counts for a specific user
+   */
+  async getUserImageJobCounts(userId: string) {
+    return await imageQueueService.getUserJobCounts(userId);
+  }
+
+  /**
+   * Get video processing job counts for a specific user
+   */
+  async getUserVideoJobCounts(userId: string) {
+    return await videoQueueService.getUserJobCounts(userId);
+  }
+
+  /**
+   * Get combined job counts for both image and video processing for a specific user
+   */
+  async getUserJobCounts(userId: string) {
+    const [imageCounts, videoCounts] = await Promise.all([
+      imageQueueService.getUserJobCounts(userId),
+      videoQueueService.getUserJobCounts(userId),
+    ]);
+
+    return {
+      images: imageCounts,
+      videos: videoCounts,
+      total: {
+        failed: imageCounts.failed + videoCounts.failed,
+        inProgress: imageCounts.inProgress + videoCounts.inProgress,
+      },
+    };
+  }
+
+  /**
+   * Get processing and failed videos for a specific user
+   */
+  async getUserProcessingAndFailedVideos(userId: string) {
+    return await videoQueueService.getUserProcessingAndFailedVideos(userId);
+  }
+
+  /**
+   * Get processing and failed images for a specific user
+   */
+  async getUserProcessingAndFailedImages(userId: string) {
+    return await imageQueueService.getUserProcessingAndFailedImages(userId);
+  }
+
+  /**
    * Queue a video for processing (async)
    */
   async queueVideo(videoUrl: string, userId: string): Promise<{ jobId: string }> {
@@ -282,6 +329,70 @@ class ResourceProcessingController {
       startTime,
       endTime
     );
+  }
+
+  /**
+   * Remove failed video jobs
+   */
+  async removeFailedVideoJobs(userId: string, jobIds: string[]) {
+    // Verify that all jobs belong to the user
+    const jobs = await Promise.all(
+      jobIds.map((id) => videoQueueService.getJob(id))
+    );
+    
+    // Filter out null jobs and verify ownership
+    const validJobs = jobs.filter(
+      (job) => job !== null && job !== undefined
+    );
+    
+    const userJobs = validJobs.filter(
+      (job) => job.data?.userId === userId
+    );
+    
+    if (userJobs.length === 0 && jobIds.length > 0) {
+      throw new Error("No valid jobs found or all jobs do not belong to user");
+    }
+
+    // Only remove jobs that belong to the user
+    const userJobIds = userJobs.map((job) => job.id).filter(Boolean) as string[];
+    
+    if (userJobIds.length === 0) {
+      return 0;
+    }
+
+    return await videoQueueService.removeFailedJobs(userJobIds);
+  }
+
+  /**
+   * Re-queue failed videos
+   */
+  async requeueFailedVideos(userId: string, jobIds: string[]) {
+    // Verify that all jobs belong to the user
+    const jobs = await Promise.all(
+      jobIds.map((id) => videoQueueService.getJob(id))
+    );
+    
+    // Filter out null jobs and verify ownership
+    const validJobs = jobs.filter(
+      (job) => job !== null && job !== undefined
+    );
+    
+    const userJobs = validJobs.filter(
+      (job) => job.data?.userId === userId
+    );
+    
+    if (userJobs.length === 0 && jobIds.length > 0) {
+      throw new Error("No valid jobs found or all jobs do not belong to user");
+    }
+
+    // Only re-queue jobs that belong to the user
+    const userJobIds = userJobs.map((job) => job.id).filter(Boolean) as string[];
+    
+    if (userJobIds.length === 0) {
+      return [];
+    }
+
+    return await videoQueueService.requeueFailedVideos(userJobIds);
   }
 }
 

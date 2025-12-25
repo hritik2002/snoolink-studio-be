@@ -90,6 +90,136 @@ class ImageQueueService {
     );
   }
 
+  /**
+   * Get job counts filtered by userId
+   * Returns counts for failed and in-progress (active + waiting) jobs
+   */
+  async getUserJobCounts(userId: string): Promise<{
+    failed: number;
+    inProgress: number;
+  }> {
+    let failed = 0;
+    let inProgress = 0;
+
+    try {
+      // Get failed jobs (limit to 1000 to avoid performance issues)
+      const failedJobs = await this.queue.getJobs(["failed"], 0, 999);
+      failed = failedJobs.filter((job) => job.data?.userId === userId).length;
+
+      // Get active jobs (currently being processed)
+      const activeJobs = await this.queue.getJobs(["active"], 0, 999);
+      const activeCount = activeJobs.filter(
+        (job) => job.data?.userId === userId
+      ).length;
+
+      // Get waiting jobs (queued but not yet started)
+      const waitingJobs = await this.queue.getJobs(["waiting"], 0, 999);
+      const waitingCount = waitingJobs.filter(
+        (job) => job.data?.userId === userId
+      ).length;
+
+      inProgress = activeCount + waitingCount;
+    } catch (error) {
+      console.error("Error getting user job counts for images:", error);
+      // Return zeros on error to avoid breaking the API
+    }
+
+    return {
+      failed,
+      inProgress,
+    };
+  }
+
+  /**
+   * Get processing and failed images for a specific user
+   * Returns images with their URLs and job information
+   */
+  async getUserProcessingAndFailedImages(userId: string): Promise<{
+    processing: Array<{
+      id: string;
+      imageUrl: string;
+      jobId: string;
+      state: string;
+      progress?: number;
+      timestamp?: number;
+    }>;
+    failed: Array<{
+      id: string;
+      imageUrl: string;
+      jobId: string;
+      failedReason?: string;
+      timestamp?: number;
+    }>;
+  }> {
+    const processing: Array<{
+      id: string;
+      imageUrl: string;
+      jobId: string;
+      state: string;
+      progress?: number;
+      timestamp?: number;
+    }> = [];
+    const failed: Array<{
+      id: string;
+      imageUrl: string;
+      jobId: string;
+      failedReason?: string;
+      timestamp?: number;
+    }> = [];
+
+    try {
+      // Get active jobs (currently being processed)
+      const activeJobs = await this.queue.getJobs(["active"], 0, 999);
+      activeJobs
+        .filter((job) => job.data?.userId === userId)
+        .forEach((job) => {
+          processing.push({
+            id: job.id || "",
+            imageUrl: job.data.imageUrl,
+            jobId: job.data.jobId,
+            state: "active",
+            progress: typeof job.progress === "number" ? job.progress : undefined,
+            timestamp: job.timestamp,
+          });
+        });
+
+      // Get waiting jobs (queued but not yet started)
+      const waitingJobs = await this.queue.getJobs(["waiting"], 0, 999);
+      waitingJobs
+        .filter((job) => job.data?.userId === userId)
+        .forEach((job) => {
+          processing.push({
+            id: job.id || "",
+            imageUrl: job.data.imageUrl,
+            jobId: job.data.jobId,
+            state: "waiting",
+            timestamp: job.timestamp,
+          });
+        });
+
+      // Get failed jobs
+      const failedJobs = await this.queue.getJobs(["failed"], 0, 999);
+      failedJobs
+        .filter((job) => job.data?.userId === userId)
+        .forEach((job) => {
+          failed.push({
+            id: job.id || "",
+            imageUrl: job.data.imageUrl,
+            jobId: job.data.jobId,
+            failedReason: job.failedReason || undefined,
+            timestamp: job.timestamp,
+          });
+        });
+    } catch (error) {
+      console.error("Error getting user processing and failed images:", error);
+    }
+
+    return {
+      processing,
+      failed,
+    };
+  }
+
   getQueue() {
     return this.queue;
   }

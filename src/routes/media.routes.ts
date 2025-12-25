@@ -80,6 +80,114 @@ router.get("/queue-stats", async (req, res) => {
   }
 });
 
+// Get user-specific job counts
+router.get("/user-job-counts", async (req, res) => {
+  try {
+    const counts = await resourceProcessingController.getUserJobCounts(
+      req.user!.id
+    );
+    res.json({ success: true, data: counts });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get user-specific image job counts
+router.get("/user-image-job-counts", async (req, res) => {
+  try {
+    const counts = await resourceProcessingController.getUserImageJobCounts(
+      req.user!.id
+    );
+    res.json({ success: true, data: counts });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get user-specific video job counts
+router.get("/user-video-job-counts", async (req, res) => {
+  try {
+    const counts = await resourceProcessingController.getUserVideoJobCounts(
+      req.user!.id
+    );
+    res.json({ success: true, data: counts });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get user's processing and failed videos
+router.get("/user-processing-failed-videos", async (req, res) => {
+  try {
+    const videos = await resourceProcessingController.getUserProcessingAndFailedVideos(
+      req.user!.id
+    );
+    res.json({ success: true, data: videos });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get user's processing and failed images
+router.get("/user-processing-failed-images", async (req, res) => {
+  try {
+    const images = await resourceProcessingController.getUserProcessingAndFailedImages(
+      req.user!.id
+    );
+    res.json({ success: true, data: images });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Remove failed video jobs
+router.post("/remove-failed-videos", async (req, res) => {
+  try {
+    const { jobIds } = req.body;
+    if (!Array.isArray(jobIds) || jobIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "jobIds array is required",
+      });
+    }
+    const removedCount = await resourceProcessingController.removeFailedVideoJobs(
+      req.user!.id,
+      jobIds
+    );
+    res.json({
+      success: true,
+      message: `Successfully removed ${removedCount} failed video${removedCount !== 1 ? "s" : ""}`,
+      data: { removedCount },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Re-queue failed videos
+router.post("/requeue-failed-videos", async (req, res) => {
+  try {
+    const { jobIds } = req.body;
+    if (!Array.isArray(jobIds) || jobIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "jobIds array is required",
+      });
+    }
+    const results = await resourceProcessingController.requeueFailedVideos(
+      req.user!.id,
+      jobIds
+    );
+    res.json({
+      success: true,
+      message: `Re-queued ${results.length} failed video(s)`,
+      data: { results },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Video processing endpoints
 router.post("/process-video", async (req, res) => {
   try {
