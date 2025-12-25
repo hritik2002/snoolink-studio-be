@@ -6,6 +6,7 @@ export interface ImageJobData {
   imageUrl: string;
   userId: string;
   jobId: string;
+  collectionName?: string;
 }
 
 class ImageQueueService {

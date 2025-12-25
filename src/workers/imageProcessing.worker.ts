@@ -55,7 +55,7 @@ class ImageProcessingWorker {
   }
 
   private async processImage(job: Job<ImageJobData>) {
-    const { imageUrl, userId, jobId } = job.data;
+    const { imageUrl, userId, jobId, collectionName = "Default" } = job.data;
 
     try {
       const description = await this.resourceProcessingService.describeImage(
@@ -71,7 +71,8 @@ class ImageProcessingWorker {
 
       await this.supabaseService.postImages(
         [{ id, description, imageUrl }],
-        userId
+        userId,
+        collectionName
       );
 
       return {

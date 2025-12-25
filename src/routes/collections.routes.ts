@@ -24,6 +24,39 @@ router.get("/", async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/collections
+ * Create a new empty collection
+ */
+router.post("/", async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { name } = req.body;
+
+    if (!name || typeof name !== "string" || name.trim().length === 0) {
+      return res.status(400).json({ success: false, error: "Collection name is required" });
+    }
+
+    const trimmedName = name.trim();
+    
+    // Validate collection name
+    if (trimmedName.length > 100) {
+      return res.status(400).json({ success: false, error: "Collection name too long (max 100 characters)" });
+    }
+
+    const collection = await supabaseService.createCollection(userId, trimmedName);
+    return res.status(201).json({ success: true, data: collection });
+  } catch (error: any) {
+    console.error("Error creating collection:", error);
+    
+    if (error.message?.includes("already exists")) {
+      return res.status(409).json({ success: false, error: error.message });
+    }
+    
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
  * GET /api/collections/:name
  * Get a single collection by name
  */

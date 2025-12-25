@@ -244,10 +244,71 @@ export class SupabaseService {
   }
 
   /**
+   * Create a new empty collection
+   */
+  async createCollection(userId: string, collectionName: string) {
+    // Check if collection already exists
+    const { data: existing } = await this.supabaseClient
+      .from("collection_metadata")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("collection_name", collectionName)
+      .single();
+
+    if (existing) {
+      throw new Error(`Collection "${collectionName}" already exists`);
+    }
+
+    // Also check if there are resources with this collection name
+    const { data: existingResources } = await this.supabaseClient
+      .from("collections")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("collection_name", collectionName)
+      .limit(1);
+
+    if (existingResources && existingResources.length > 0) {
+      throw new Error(`Collection "${collectionName}" already exists`);
+    }
+
+    // Create the collection metadata entry
+    const { data, error } = await this.supabaseClient
+      .from("collection_metadata")
+      .insert({
+        user_id: userId,
+        collection_name: collectionName,
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    return {
+      name: collectionName,
+      pineconeNamespace: this.getPineconeNamespace(userId, collectionName),
+      imageCount: 0,
+      videoCount: 0,
+      thumbnailUrl: null,
+      createdAt: data.created_at,
+    };
+  }
+
+  /**
    * Get all collections (distinct collection names) for a user with counts
+   * Combines collections from metadata table (including empty ones) and resource table
    */
   async getCollections(userId: string) {
-    // Get distinct collection names with counts
+    // Get collections from metadata table (includes empty collections)
+    const { data: metadataCollections, error: metaError } = await this.supabaseClient
+      .from("collection_metadata")
+      .select("collection_name, created_at")
+      .eq("user_id", userId);
+
+    if (metaError) {
+      console.warn("collection_metadata table may not exist yet:", metaError.message);
+    }
+
+    // Get resources for counting
     const { data, error } = await this.supabaseClient
       .from("collections")
       .select("collection_name, resource_type, resource_url")
@@ -260,15 +321,28 @@ export class SupabaseService {
       imageCount: number;
       videoCount: number;
       thumbnailUrl: string | null;
-      oldestDate: string | null;
+      createdAt: string | null;
     }>();
 
+    // First, add all collections from metadata (including empty ones)
+    if (metadataCollections) {
+      for (const meta of metadataCollections) {
+        collectionMap.set(meta.collection_name, {
+          imageCount: 0,
+          videoCount: 0,
+          thumbnailUrl: null,
+          createdAt: meta.created_at,
+        });
+      }
+    }
+
+    // Then count resources
     for (const row of data) {
       const existing = collectionMap.get(row.collection_name) || {
         imageCount: 0,
         videoCount: 0,
         thumbnailUrl: null,
-        oldestDate: null,
+        createdAt: null,
       };
 
       if (row.resource_type === "image") {

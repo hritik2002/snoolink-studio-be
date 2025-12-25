@@ -6,6 +6,7 @@ export interface VideoJobData {
   videoUrl: string;
   userId: string;
   jobId: string;
+  collectionName?: string;
 }
 
 class VideoQueueService {

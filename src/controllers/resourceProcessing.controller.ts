@@ -175,13 +175,15 @@ class ResourceProcessingController {
 
   async queueImages(
     imageUrls: string[],
-    userId: string
+    userId: string,
+    collectionName: string = "Default"
   ): Promise<{ jobId: string; totalImages: number; queuedJobs: string[] }> {
     const jobId = uuidv4();
     const jobs = imageUrls.map((imageUrl) => ({
       imageUrl,
       userId,
       jobId,
+      collectionName,
     }));
 
     const queuedJobs = await imageQueueService.addBulkImageJobs(jobs);
@@ -258,12 +260,13 @@ class ResourceProcessingController {
   /**
    * Queue a video for processing (async)
    */
-  async queueVideo(videoUrl: string, userId: string): Promise<{ jobId: string }> {
+  async queueVideo(videoUrl: string, userId: string, collectionName: string = "Default"): Promise<{ jobId: string }> {
     const jobId = uuidv4();
     const job = await videoQueueService.addVideoJob({
       videoUrl,
       userId,
       jobId,
+      collectionName,
     });
 
     return {

@@ -56,7 +56,7 @@ class VideoProcessingWorker {
   }
 
   private async processVideo(job: Job<VideoJobData>) {
-    const { videoUrl, userId, jobId } = job.data;
+    const { videoUrl, userId, jobId, collectionName = "Default" } = job.data;
 
     try {
       // Update progress: starting
@@ -89,7 +89,8 @@ class VideoProcessingWorker {
             videoUrl,
           },
         ],
-        userId
+        userId,
+        collectionName
       );
 
       // Update progress: completed

@@ -20,11 +20,12 @@ router.get("/get-all-videos", async (req, res) => {
 
 router.post("/upload-images", async (req, res) => {
   try {
-    const { urls } = await req.body;
+    const { urls, collectionName = "Default" } = req.body;
 
     const queueResult = await resourceProcessingController.queueImages(
       urls as string[],
-      req.user!.id
+      req.user!.id,
+      collectionName
     );
 
     res.json({
@@ -191,7 +192,7 @@ router.post("/requeue-failed-videos", async (req, res) => {
 // Video processing endpoints
 router.post("/process-video", async (req, res) => {
   try {
-    const { videoUrl } = req.body;
+    const { videoUrl, collectionName = "Default" } = req.body;
 
     if (!videoUrl || typeof videoUrl !== "string") {
       return res.status(400).json({
@@ -203,7 +204,8 @@ router.post("/process-video", async (req, res) => {
     // Queue the video for processing (async)
     const { jobId } = await resourceProcessingController.queueVideo(
       videoUrl,
-      req.user!.id
+      req.user!.id,
+      collectionName
     );
 
     res.json({
