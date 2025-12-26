@@ -5,7 +5,7 @@ import { OpenAI } from "openai";
 import { v2 as cloudinary } from "cloudinary";
 import { CONFIG } from "../config";
 import { VectorDBService } from "./vectordb.service";
-import { createUserNamespace } from "../utils/namespace";
+import { createUserNamespace, createCollectionNamespace } from "../utils/namespace";
 import util from "util";
 import child_process from "child_process";
 import axios from "axios";
@@ -294,12 +294,17 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
   /**
    * Process video from URL and index all chunks
    */
-  async processAndIndexVideo(videoUrl: string, userId: string): Promise<{
+  async processAndIndexVideo(
+    videoUrl: string, 
+    userId: string,
+    collectionName: string = "Default"
+  ): Promise<{
     videoUrl: string;
     chunksIndexed: number;
     results: Array<{ chunkId: string; summary: string; start: number; end: number }>;
   }> {
-    const namespace = createUserNamespace(userId, "video");
+    // Use collection-based namespace for indexing videos
+    const namespace = createCollectionNamespace(userId, collectionName, "video");
     const vectorDB = new VectorDBService(namespace);
 
     // Step 1: Download video from URL
@@ -376,6 +381,85 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
       startTime: m.metadata?.startTime as string | undefined,
       endTime: m.metadata?.endTime as string | undefined,
     }));
+  }
+
+  /**
+   * Search videos across multiple collections using Promise.all
+   * Results are merged and sorted by score
+   */
+  async searchVideosMultipleCollections(
+    query: string,
+    userId: string,
+    collections: string[],
+    topK: number = 5
+  ): Promise<Array<{
+    id: string;
+    score: number;
+    text: string;
+    videoUrl?: string;
+    startTime?: string;
+    endTime?: string;
+    collectionName?: string;
+  }>> {
+    if (collections.length === 0) {
+      return [];
+    }
+
+    // Create search promises for each collection
+    const searchPromises = collections.map(async (collectionName) => {
+      try {
+        // Use collection-based namespace for videos
+        const namespace = createCollectionNamespace(userId, collectionName, "video");
+        const vectorDB = new VectorDBService(namespace);
+        const results = await vectorDB.query(query, topK);
+
+        // If searching "Default" and no results, also try legacy namespace for backward compatibility
+        if (collectionName === "Default" && results.matches.length === 0) {
+          console.log(`No results in new namespace for Default videos, trying legacy namespace...`);
+          try {
+            const legacyNamespace = createUserNamespace(userId, "video"); // Legacy: user-{userId}-videos
+            const legacyVectorDB = new VectorDBService(legacyNamespace);
+            const legacyResults = await legacyVectorDB.query(query, topK);
+            return legacyResults.matches.map((m) => ({
+              id: m.id || "",
+              score: m.score || 0,
+              text: (m.metadata?.text as string) || "",
+              videoUrl: m.metadata?.videoUrl as string | undefined,
+              startTime: m.metadata?.startTime as string | undefined,
+              endTime: m.metadata?.endTime as string | undefined,
+              collectionName,
+            }));
+          } catch (legacyError) {
+            console.error(`Error searching legacy video namespace:`, legacyError);
+          }
+        }
+
+        return results.matches.map((m) => ({
+          id: m.id || "",
+          score: m.score || 0,
+          text: (m.metadata?.text as string) || "",
+          videoUrl: m.metadata?.videoUrl as string | undefined,
+          startTime: m.metadata?.startTime as string | undefined,
+          endTime: m.metadata?.endTime as string | undefined,
+          collectionName,
+        }));
+      } catch (error) {
+        console.error(`Error searching videos in collection ${collectionName}:`, error);
+        return [];
+      }
+    });
+
+    // Execute all searches in parallel
+    const allResults = await Promise.all(searchPromises);
+
+    // Flatten and merge results
+    const mergedResults = allResults.flat();
+
+    // Sort by score descending
+    mergedResults.sort((a, b) => b.score - a.score);
+
+    // Return top K results across all collections
+    return mergedResults.slice(0, topK);
   }
 
   /**

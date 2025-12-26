@@ -62,10 +62,11 @@ class VideoProcessingWorker {
       // Update progress: starting
       await job.updateProgress(10);
 
-      // Process and index video
+      // Process and index video in collection namespace
       const result = await this.videoProcessingService.processAndIndexVideo(
         videoUrl,
-        userId
+        userId,
+        collectionName
       );
 
       // Update progress: storing in Supabase

@@ -62,11 +62,12 @@ class ImageProcessingWorker {
         imageUrl
       );
 
-      // Embed image in vector database
+      // Embed image in vector database with collection namespace
       const id = await this.resourceProcessingService.embedImage({
         description,
         imageUrl,
         userId,
+        collectionName,
       });
 
       await this.supabaseService.postImages(

@@ -82,6 +82,82 @@ router.get("/search-images", async (req, res) => {
   }
 });
 
+/**
+ * GET /api/media/search
+ * Search across multiple collections
+ * Query params:
+ *   - query: Search query (required)
+ *   - collections: Comma-separated collection names or "all" (required)
+ *   - topK: Number of results (optional, default 10)
+ */
+router.get("/search", async (req, res) => {
+  const { query, collections, topK } = req.query;
+  
+  if (!query || typeof query !== "string" || !query.trim()) {
+    return res.status(400).json({ 
+      success: false, 
+      error: "Search query is required" 
+    });
+  }
+
+  if (!collections || typeof collections !== "string") {
+    return res.status(400).json({ 
+      success: false, 
+      error: "Collections parameter is required (comma-separated names or 'all')" 
+    });
+  }
+
+  try {
+    const userId = req.user!.id;
+    let collectionNames: string[];
+
+    if (collections.toLowerCase() === "all") {
+      // Fetch all user collections
+      const supabaseService = new (await import("../services/supabaseService")).SupabaseService();
+      const userCollections = await supabaseService.getCollections(userId);
+      collectionNames = userCollections.map(c => c.name);
+      
+      if (collectionNames.length === 0) {
+        return res.json({ 
+          success: true, 
+          data: { results: [], expandedQuery: null, collectionsSearched: [] } 
+        });
+      }
+    } else {
+      // Parse comma-separated collection names
+      collectionNames = collections.split(",").map(c => c.trim()).filter(c => c.length > 0);
+      
+      if (collectionNames.length === 0) {
+        return res.status(400).json({ 
+          success: false, 
+          error: "At least one collection name is required" 
+        });
+      }
+
+      if (collectionNames.length > 3) {
+        return res.status(400).json({ 
+          success: false, 
+          error: "Maximum 3 collections can be searched at once" 
+        });
+      }
+    }
+
+    const results = await resourceProcessingController.searchMultipleCollections(
+      query,
+      userId,
+      collectionNames,
+      topK ? parseInt(topK as string, 10) : 10,
+      "/api/media/search",
+      req.method
+    );
+
+    res.json({ success: true, data: results });
+  } catch (error: any) {
+    console.error("Error in multi-collection search:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.get("/job-status/:jobId", async (req, res) => {
   const { jobId } = req.params;
   try {
@@ -277,6 +353,82 @@ router.get("/search-videos", async (req, res) => {
 
     res.json({ success: true, data: results });
   } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * GET /api/media/search-videos-collections
+ * Search videos across multiple collections
+ * Query params:
+ *   - query: Search query (required)
+ *   - collections: Comma-separated collection names or "all" (required)
+ *   - topK: Number of results (optional, default 10)
+ */
+router.get("/search-videos-collections", async (req, res) => {
+  const { query, collections, topK } = req.query;
+  
+  if (!query || typeof query !== "string" || !query.trim()) {
+    return res.status(400).json({ 
+      success: false, 
+      error: "Search query is required" 
+    });
+  }
+
+  if (!collections || typeof collections !== "string") {
+    return res.status(400).json({ 
+      success: false, 
+      error: "Collections parameter is required (comma-separated names or 'all')" 
+    });
+  }
+
+  try {
+    const userId = req.user!.id;
+    let collectionNames: string[];
+
+    if (collections.toLowerCase() === "all") {
+      // Fetch all user collections
+      const supabaseService = new (await import("../services/supabaseService")).SupabaseService();
+      const userCollections = await supabaseService.getCollections(userId);
+      collectionNames = userCollections.map(c => c.name);
+      
+      if (collectionNames.length === 0) {
+        return res.json({ 
+          success: true, 
+          data: { results: [], expandedQuery: null, collectionsSearched: [] } 
+        });
+      }
+    } else {
+      // Parse comma-separated collection names
+      collectionNames = collections.split(",").map(c => c.trim()).filter(c => c.length > 0);
+      
+      if (collectionNames.length === 0) {
+        return res.status(400).json({ 
+          success: false, 
+          error: "At least one collection name is required" 
+        });
+      }
+
+      if (collectionNames.length > 3) {
+        return res.status(400).json({ 
+          success: false, 
+          error: "Maximum 3 collections can be searched at once" 
+        });
+      }
+    }
+
+    const results = await resourceProcessingController.searchVideosMultipleCollections(
+      query,
+      userId,
+      collectionNames,
+      topK ? parseInt(topK as string, 10) : 10,
+      "/api/media/search-videos-collections",
+      req.method
+    );
+
+    res.json({ success: true, data: results });
+  } catch (error: any) {
+    console.error("Error in multi-collection video search:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

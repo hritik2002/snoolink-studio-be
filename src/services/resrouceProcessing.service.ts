@@ -1,7 +1,15 @@
 import { EXPAND_QUERY_SYSTEM_PROMPT } from "../utils/constants";
-import { createUserNamespace } from "../utils/namespace";
+import { createUserNamespace, createCollectionNamespace } from "../utils/namespace";
 import { LLMServices } from "./llm.service";
 import { VectorDBService } from "./vectordb.service";
+
+interface SearchResult {
+  id: string;
+  score: number;
+  text: string;
+  imageUrl: string;
+  collectionName?: string;
+}
 
 export class ResourceProcessingService {
   private db: VectorDBService | null = null;
@@ -12,7 +20,7 @@ export class ResourceProcessingService {
     this.llmClient = new LLMServices();
   }
 
-  // Get or create VectorDBService for a specific user (images namespace)
+  // Get or create VectorDBService for a specific user (images namespace - legacy)
   private getVectorDB(userId: string): VectorDBService {
     if (!this.db || this.currentUserId !== userId) {
       const namespace = createUserNamespace(userId, "image");
@@ -20,6 +28,12 @@ export class ResourceProcessingService {
       this.currentUserId = userId;
     }
     return this.db;
+  }
+
+  // Get VectorDBService for a specific collection (images)
+  private getCollectionVectorDB(userId: string, collectionName: string): VectorDBService {
+    const namespace = createCollectionNamespace(userId, collectionName, "image");
+    return new VectorDBService(namespace);
   }
 
   async describeImage(imageUrl: string): Promise<string> {
@@ -30,12 +44,15 @@ export class ResourceProcessingService {
     description,
     imageUrl,
     userId,
+    collectionName = "Default",
   }: {
     description: string;
     imageUrl: string;
     userId: string;
+    collectionName?: string;
   }): Promise<string> {
-    const db = this.getVectorDB(userId);
+    // Use collection-based namespace
+    const db = this.getCollectionVectorDB(userId, collectionName);
     const id = await db.upsert(description, {
       imageUrl,
       description,
@@ -43,6 +60,7 @@ export class ResourceProcessingService {
     return id ?? "";
   }
 
+  // Legacy single-namespace search
   async searchImages({
     query,
     userId,
@@ -62,6 +80,78 @@ export class ResourceProcessingService {
       }))
     );
     return results;
+  }
+
+  /**
+   * Search across multiple collections using Promise.all
+   * Results are merged and sorted by score
+   */
+  async searchMultipleCollections({
+    query,
+    userId,
+    collections,
+    topK = 5,
+  }: {
+    query: string;
+    userId: string;
+    collections: string[];
+    topK?: number;
+  }): Promise<SearchResult[]> {
+    if (collections.length === 0) {
+      return [];
+    }
+
+    console.log("collections", collections);
+
+    // Create search promises for each collection
+    const searchPromises = collections.map(async (collectionName) => {
+      try {
+        // Use collection-based namespace
+        const db = this.getCollectionVectorDB(userId, collectionName);
+        const results = await db.query(query, topK);
+        
+        // If searching "Default" and no results, also try legacy namespace for backward compatibility
+        if (collectionName === "Default" && results.matches.length === 0) {
+          console.log(`No results in new namespace for Default, trying legacy namespace...`);
+          try {
+            const legacyDb = this.getVectorDB(userId); // Legacy namespace: user-{userId}-images
+            const legacyResults = await legacyDb.query(query, topK);
+            return legacyResults.matches.map((m) => ({
+              id: m.id,
+              score: m.score ?? 0,
+              text: (m.metadata?.description as string) ?? "",
+              imageUrl: (m.metadata?.imageUrl as string) ?? "",
+              collectionName,
+            }));
+          } catch (legacyError) {
+            console.error(`Error searching legacy namespace:`, legacyError);
+          }
+        }
+        
+        return results.matches.map((m) => ({
+          id: m.id,
+          score: m.score ?? 0,
+          text: (m.metadata?.description as string) ?? "",
+          imageUrl: (m.metadata?.imageUrl as string) ?? "",
+          collectionName,
+        }));
+      } catch (error) {
+        console.error(`Error searching collection ${collectionName}:`, error);
+        return []; // Return empty array on error to not fail the entire search
+      }
+    });
+
+    // Execute all searches in parallel
+    const allResults = await Promise.all(searchPromises);
+
+    // Flatten and merge results
+    const mergedResults: SearchResult[] = allResults.flat();
+
+    // Sort by score descending
+    mergedResults.sort((a, b) => b.score - a.score);
+
+    // Return top K results across all collections
+    return mergedResults.slice(0, topK);
   }
 
   async expandQuery(query: string): Promise<string> {

@@ -185,6 +185,78 @@ class ResourceProcessingController {
     }
   }
 
+  /**
+   * Search across multiple collections
+   * @param query - Search query
+   * @param userId - User ID
+   * @param collections - Array of collection names to search in
+   * @param topK - Number of results per collection (default 5)
+   */
+  async searchMultipleCollections(
+    query: string,
+    userId: string,
+    collections: string[],
+    topK: number = 5,
+    endpoint: string = "/api/media/search",
+    method: string = "GET"
+  ) {
+    const startTime = Date.now();
+    let expandedQuery: string | null = null;
+    let results: any = null;
+    let error: string | null = null;
+
+    try {
+      expandedQuery = await this.resourceProcessingService.expandQuery(
+        `User Query: "${query}"
+        Expanded:`
+      );
+
+      results = await this.resourceProcessingService.searchMultipleCollections({
+        query: expandedQuery,
+        userId,
+        collections,
+        topK,
+      });
+
+      const responseTime = Date.now() - startTime;
+
+      // Log the request asynchronously (fire-and-forget)
+      loggingService.logRequest({
+        user_id: userId,
+        user_query: query,
+        enhanced_query: expandedQuery,
+        response: results,
+        error: null,
+        endpoint,
+        method,
+        response_time_ms: responseTime,
+      });
+
+      return {
+        results,
+        expandedQuery,
+        collectionsSearched: collections,
+      };
+    } catch (err: any) {
+      error = err?.message || "Unknown error occurred";
+      const responseTime = Date.now() - startTime;
+
+      // Log the error asynchronously (fire-and-forget)
+      loggingService.logRequest({
+        user_id: userId,
+        user_query: query,
+        enhanced_query: expandedQuery,
+        response: null,
+        error: error,
+        endpoint,
+        method,
+        response_time_ms: responseTime,
+      });
+
+      throw err;
+    }
+  }
+
   async queueImages(
     imageUrls: string[],
     userId: string,
@@ -329,6 +401,74 @@ class ResourceProcessingController {
     endTime?: string;
   }>> {
     return await this.videoProcessingService.searchVideos(query, userId, topK);
+  }
+
+  /**
+   * Search videos across multiple collections
+   */
+  async searchVideosMultipleCollections(
+    query: string,
+    userId: string,
+    collections: string[],
+    topK: number = 10,
+    endpoint: string = "/api/media/search-videos",
+    method: string = "GET"
+  ) {
+    const startTime = Date.now();
+    let expandedQuery: string | null = null;
+    let results: any = null;
+    let error: string | null = null;
+
+    try {
+      expandedQuery = await this.resourceProcessingService.expandQuery(
+        `User Query: "${query}"
+        Expanded:`
+      );
+
+      results = await this.videoProcessingService.searchVideosMultipleCollections(
+        expandedQuery,
+        userId,
+        collections,
+        topK
+      );
+
+      const responseTime = Date.now() - startTime;
+
+      // Log the request asynchronously (fire-and-forget)
+      loggingService.logRequest({
+        user_id: userId,
+        user_query: query,
+        enhanced_query: expandedQuery,
+        response: results,
+        error: null,
+        endpoint,
+        method,
+        response_time_ms: responseTime,
+      });
+
+      return {
+        results,
+        expandedQuery,
+        collectionsSearched: collections,
+      };
+    } catch (err: any) {
+      error = err?.message || "Unknown error occurred";
+      const responseTime = Date.now() - startTime;
+
+      // Log the error asynchronously (fire-and-forget)
+      loggingService.logRequest({
+        user_id: userId,
+        user_query: query,
+        enhanced_query: expandedQuery,
+        response: null,
+        error: error,
+        endpoint,
+        method,
+        response_time_ms: responseTime,
+      });
+
+      throw err;
+    }
   }
 
   /**

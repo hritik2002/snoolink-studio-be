@@ -8,7 +8,9 @@
         "start": "tsx src/server.ts",
         "dev": "tsx watch src/server.ts",
         "build": "echo 'No build step needed - using tsx for runtime'",
-        "test": "echo \"Error: no test specified\" && exit 1"
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "migrate:namespaces": "tsx src/scripts/migrate-pinecone-namespaces.ts",
+        "migrate:namespaces:dry": "DRY_RUN=true tsx src/scripts/migrate-pinecone-namespaces.ts"
     },
     "keywords": [
         "snoolink.studio",
