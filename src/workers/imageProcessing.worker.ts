@@ -59,7 +59,13 @@ class ImageProcessingWorker {
 
     try {
       const description = await this.resourceProcessingService.describeImage(
-        imageUrl
+        imageUrl,
+        userId,
+        {
+          collectionName,
+          resourceType: "image",
+          endpoint: "image_processing_worker",
+        }
       );
 
       // Embed image in vector database with collection namespace

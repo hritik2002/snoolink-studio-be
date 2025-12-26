@@ -5,6 +5,7 @@ import routes from "./routes/index.ts";
 import logsRoutes from "./routes/logs.routes.ts";
 import mediaRoutes from "./routes/media.routes.ts";
 import collectionsRoutes from "./routes/collections.routes.ts";
+import costRoutes from "./routes/cost.routes.ts";
 import { FILE_SIZE_LIMIT } from "./utils/constants";
 
 const app = express();
@@ -39,6 +40,8 @@ app.use("/api/logs", logsRoutes);
 app.use("/api/media", mediaRoutes);
 // Mount collections routes at /api/collections
 app.use("/api/collections", collectionsRoutes);
+// Mount cost tracking routes at /api/cost
+app.use("/api/cost", costRoutes);
 // Mount other routes at /api
 app.use("/api", ...routes);
 

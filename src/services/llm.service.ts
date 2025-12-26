@@ -1,16 +1,28 @@
 import { OpenAI } from "openai";
 import { DESCRIBE_IMAGE_SYSTEM_PROMPT } from "../utils/constants";
+import { CostTrackingService } from "./costTracking.service";
 
 export class LLMServices {
   private openaiClient: OpenAI;
+  private costTracker: CostTrackingService;
 
   constructor() {
     this.openaiClient = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
     });
+    this.costTracker = new CostTrackingService();
   }
 
-  async describeImage(imageUrl: string): Promise<string> {
+  async describeImage(
+    imageUrl: string,
+    userId: string,
+    metadata?: { collectionName?: string; resourceType?: string; endpoint?: string }
+  ): Promise<string> {
+    const startTime = Date.now();
+    let requestId: string | undefined;
+    let success = true;
+    let errorMessage: string | undefined;
+
     try {
       const response = await this.openaiClient.chat.completions.create({
         model: "gpt-4o-mini",
@@ -33,26 +45,145 @@ export class LLMServices {
         ],
       });
 
+      requestId = response.id;
+      const responseTime = Date.now() - startTime;
+
+      // Track cost
+      await this.costTracker.trackVision(
+        {
+          userId,
+          apiType: "vision",
+          model: "gpt-4o-mini",
+          operationType: "image_description",
+          endpoint: metadata?.endpoint,
+          context: "Image description for semantic search",
+          metadata: {
+            collection_name: metadata?.collectionName,
+            resource_type: metadata?.resourceType,
+            image_url: imageUrl,
+          },
+          requestId,
+          responseTimeMs: responseTime,
+          success: true,
+        },
+        response.usage,
+        1 // 1 image
+      );
+
       return response.choices[0]?.message.content?.trim() || "";
     } catch (error) {
+      success = false;
+      errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const responseTime = Date.now() - startTime;
+
+      // Track failed call
+      await this.costTracker.trackVision(
+        {
+          userId,
+          apiType: "vision",
+          model: "gpt-4o-mini",
+          operationType: "image_description",
+          endpoint: metadata?.endpoint,
+          context: "Image description for semantic search",
+          metadata: {
+            collection_name: metadata?.collectionName,
+            resource_type: metadata?.resourceType,
+            image_url: imageUrl,
+          },
+          requestId,
+          responseTimeMs: responseTime,
+          success: false,
+          errorMessage,
+        },
+        undefined,
+        1
+      );
+
       console.error("Error describing image", error);
       throw error;
     }
   }
-  async ask(query: string, systemPrompt: string): Promise<string> {
-    const response = await this.openaiClient.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
+
+  async ask(
+    query: string,
+    systemPrompt: string,
+    userId: string,
+    operationType: "query_expansion" | "video_summary" | "other" = "other",
+    metadata?: { endpoint?: string; context?: string; [key: string]: any }
+  ): Promise<string> {
+    const startTime = Date.now();
+    let requestId: string | undefined;
+    let success = true;
+    let errorMessage: string | undefined;
+
+    try {
+      const response = await this.openaiClient.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt,
+          },
+          {
+            role: "user",
+            content: query,
+          },
+        ],
+      });
+
+      requestId = response.id;
+      const responseTime = Date.now() - startTime;
+
+      // Track cost
+      await this.costTracker.trackChatCompletion(
         {
-          role: "system",
-          content: systemPrompt,
+          userId,
+          apiType: "chat_completion",
+          model: "gpt-4o-mini",
+          operationType,
+          endpoint: metadata?.endpoint,
+          context: metadata?.context || "LLM query",
+          metadata: {
+            ...metadata,
+            query_length: query.length,
+            system_prompt_length: systemPrompt.length,
+          },
+          requestId,
+          responseTimeMs: responseTime,
+          success: true,
         },
+        response.usage
+      );
+
+      return response.choices[0]?.message.content?.trim() || "";
+    } catch (error) {
+      success = false;
+      errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const responseTime = Date.now() - startTime;
+
+      // Track failed call
+      await this.costTracker.trackChatCompletion(
         {
-          role: "user",
-          content: query,
+          userId,
+          apiType: "chat_completion",
+          model: "gpt-4o-mini",
+          operationType,
+          endpoint: metadata?.endpoint,
+          context: metadata?.context || "LLM query",
+          metadata: {
+            ...metadata,
+            query_length: query.length,
+            system_prompt_length: systemPrompt.length,
+          },
+          requestId,
+          responseTimeMs: responseTime,
+          success: false,
+          errorMessage,
         },
-      ],
-    });
-    return response.choices[0]?.message.content?.trim() || "";
+        undefined
+      );
+
+      throw error;
+    }
   }
 }

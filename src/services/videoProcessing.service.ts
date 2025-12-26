@@ -6,6 +6,7 @@ import { v2 as cloudinary } from "cloudinary";
 import { CONFIG } from "../config";
 import { VectorDBService } from "./vectordb.service";
 import { createUserNamespace, createCollectionNamespace } from "../utils/namespace";
+import { CostTrackingService } from "./costTracking.service";
 import util from "util";
 import child_process from "child_process";
 import axios from "axios";
@@ -20,11 +21,13 @@ cloudinary.config({ ...CONFIG.cloudinary });
 export class VideoProcessingService {
   private openaiClient: OpenAI;
   private tempDir: string;
+  private costTracker: CostTrackingService;
 
   constructor() {
     this.openaiClient = new OpenAI({
       apiKey: CONFIG.openai.apiKey,
     });
+    this.costTracker = new CostTrackingService();
     this.tempDir = path.join(process.cwd(), "temp");
     // Ensure temp directory exists
     if (!fs.existsSync(this.tempDir)) {
@@ -164,33 +167,104 @@ export class VideoProcessingService {
   /**
    * Get GPT vision description of a frame using Cloudinary URL
    */
-  private async describeFrameWithGPT(frameUrl: string): Promise<string> {
-    const response = await this.openaiClient.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: "Describe what's happening in this video frame in plain text. Be detailed and specific.",
-            },
-            {
-              type: "image_url",
-              image_url: { url: frameUrl },
-            },
-          ],
-        },
-      ],
-    });
+  private async describeFrameWithGPT(
+    frameUrl: string,
+    userId: string,
+    metadata?: { videoUrl?: string; chunkIndex?: number; collectionName?: string }
+  ): Promise<string> {
+    const startTime = Date.now();
+    let requestId: string | undefined;
+    let success = true;
+    let errorMessage: string | undefined;
 
-    return response.choices[0].message.content?.trim() || "";
+    try {
+      const response = await this.openaiClient.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Describe what's happening in this video frame in plain text. Be detailed and specific.",
+              },
+              {
+                type: "image_url",
+                image_url: { url: frameUrl },
+              },
+            ],
+          },
+        ],
+      });
+
+      requestId = response.id;
+      const responseTime = Date.now() - startTime;
+
+      // Track cost
+      await this.costTracker.trackVision(
+        {
+          userId,
+          apiType: "vision",
+          model: "gpt-4o-mini",
+          operationType: "video_frame_description",
+          endpoint: "video_processing",
+          context: "Video frame description for semantic indexing",
+          metadata: {
+            video_url: metadata?.videoUrl,
+            chunk_index: metadata?.chunkIndex,
+            collection_name: metadata?.collectionName,
+            frame_url: frameUrl,
+          },
+          requestId,
+          responseTimeMs: responseTime,
+          success: true,
+        },
+        response.usage,
+        1 // 1 image
+      );
+
+      return response.choices[0].message.content?.trim() || "";
+    } catch (error) {
+      success = false;
+      errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const responseTime = Date.now() - startTime;
+
+      // Track failed call
+      await this.costTracker.trackVision(
+        {
+          userId,
+          apiType: "vision",
+          model: "gpt-4o-mini",
+          operationType: "video_frame_description",
+          endpoint: "video_processing",
+          context: "Video frame description for semantic indexing",
+          metadata: {
+            video_url: metadata?.videoUrl,
+            chunk_index: metadata?.chunkIndex,
+            collection_name: metadata?.collectionName,
+            frame_url: frameUrl,
+          },
+          requestId,
+          responseTimeMs: responseTime,
+          success: false,
+          errorMessage,
+        },
+        undefined,
+        1
+      );
+
+      throw error;
+    }
   }
 
   /**
    * Generate summary from frame descriptions
    */
-  private async generateClipSummary(frameDescriptions: string[]): Promise<string> {
+  private async generateClipSummary(
+    frameDescriptions: string[],
+    userId: string,
+    metadata?: { videoUrl?: string; chunkIndex?: number; collectionName?: string }
+  ): Promise<string> {
     const frameDescriptionsText = frameDescriptions
       .map((desc, idx) => `Frame ${idx + 1}: ${desc}`)
       .join("\n\n");
@@ -203,17 +277,80 @@ ${frameDescriptionsText}
 
 Generate a comprehensive summary of what's happening in this 5-second video clip, combining all the visual information from the frames. Be specific and detailed.`;
 
-    const response = await this.openaiClient.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-    });
+    const startTime = Date.now();
+    let requestId: string | undefined;
+    let success = true;
+    let errorMessage: string | undefined;
 
-    return response.choices[0].message.content?.trim() || "";
+    try {
+      const response = await this.openaiClient.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+      });
+
+      requestId = response.id;
+      const responseTime = Date.now() - startTime;
+
+      // Track cost
+      await this.costTracker.trackChatCompletion(
+        {
+          userId,
+          apiType: "chat_completion",
+          model: "gpt-4o-mini",
+          operationType: "video_summary",
+          endpoint: "video_processing",
+          context: "Video clip summary generation from frame descriptions",
+          metadata: {
+            video_url: metadata?.videoUrl,
+            chunk_index: metadata?.chunkIndex,
+            collection_name: metadata?.collectionName,
+            frame_count: frameDescriptions.length,
+            prompt_length: prompt.length,
+          },
+          requestId,
+          responseTimeMs: responseTime,
+          success: true,
+        },
+        response.usage
+      );
+
+      return response.choices[0].message.content?.trim() || "";
+    } catch (error) {
+      success = false;
+      errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const responseTime = Date.now() - startTime;
+
+      // Track failed call
+      await this.costTracker.trackChatCompletion(
+        {
+          userId,
+          apiType: "chat_completion",
+          model: "gpt-4o-mini",
+          operationType: "video_summary",
+          endpoint: "video_processing",
+          context: "Video clip summary generation from frame descriptions",
+          metadata: {
+            video_url: metadata?.videoUrl,
+            chunk_index: metadata?.chunkIndex,
+            collection_name: metadata?.collectionName,
+            frame_count: frameDescriptions.length,
+            prompt_length: prompt.length,
+          },
+          requestId,
+          responseTimeMs: responseTime,
+          success: false,
+          errorMessage,
+        },
+        undefined
+      );
+
+      throw error;
+    }
   }
 
   /**
@@ -223,7 +360,9 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
     chunk: { filePath: string; start: number; end: number; index: number },
     videoUrl: string,
     tempDir: string,
-    vectorDB: VectorDBService
+    vectorDB: VectorDBService,
+    userId: string,
+    collectionName?: string
   ): Promise<{ chunkId: string; summary: string; start: number; end: number }> {
     const { filePath: chunkPath, start, end, index } = chunk;
 
@@ -244,7 +383,11 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
       console.log(`Uploaded frame: ${frameUrl}`);
 
       // Get GPT description
-      const description = await this.describeFrameWithGPT(frameUrl);
+      const description = await this.describeFrameWithGPT(frameUrl, userId, {
+        videoUrl,
+        chunkIndex: index,
+        collectionName,
+      });
       frameDescriptions.push(description);
       console.log(`Frame description: ${description.substring(0, 100)}...`);
 
@@ -267,7 +410,11 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
     }
 
     // Step 3: Generate summary from frames
-    const summary = await this.generateClipSummary(frameDescriptions);
+    const summary = await this.generateClipSummary(frameDescriptions, userId, {
+      videoUrl,
+      chunkIndex: index,
+      collectionName,
+    });
     console.log(`Clip summary: ${summary.substring(0, 150)}...`);
 
     // Step 4: Embed and store in vector DB
@@ -305,7 +452,7 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
   }> {
     // Use collection-based namespace for indexing videos
     const namespace = createCollectionNamespace(userId, collectionName, "video");
-    const vectorDB = new VectorDBService(namespace);
+    const vectorDB = new VectorDBService(namespace, userId);
 
     // Step 1: Download video from URL
     const videoPath = await this.downloadVideo(videoUrl);
@@ -326,7 +473,7 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
 
       for (const chunk of chunks) {
         try {
-          const result = await this.processChunk(chunk, videoUrl, chunksDir, vectorDB);
+          const result = await this.processChunk(chunk, videoUrl, chunksDir, vectorDB, userId, collectionName);
           results.push(result);
         } catch (error) {
           console.error(`Error processing chunk ${chunk.index}:`, error);

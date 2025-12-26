@@ -27,7 +27,9 @@ class ResourceProcessingController {
           "image"
         );
         const description = await this.resourceProcessingService.describeImage(
-          fileUrl
+          fileUrl,
+          userId,
+          { endpoint: "/api/media/upload-image", resourceType: "image" }
         );
         const id = await this.resourceProcessingService.embedImage({
           description,
@@ -142,7 +144,9 @@ class ResourceProcessingController {
     try {
       expandedQuery = await this.resourceProcessingService.expandQuery(
         `User Query: "${query}"
-        Expanded:`
+        Expanded:`,
+        userId,
+        endpoint
       );
 
       results = await this.resourceProcessingService.searchImages({
@@ -208,7 +212,9 @@ class ResourceProcessingController {
     try {
       expandedQuery = await this.resourceProcessingService.expandQuery(
         `User Query: "${query}"
-        Expanded:`
+        Expanded:`,
+        userId,
+        endpoint
       );
 
       results = await this.resourceProcessingService.searchMultipleCollections({
@@ -422,7 +428,9 @@ class ResourceProcessingController {
     try {
       expandedQuery = await this.resourceProcessingService.expandQuery(
         `User Query: "${query}"
-        Expanded:`
+        Expanded:`,
+        userId,
+        endpoint
       );
 
       results = await this.videoProcessingService.searchVideosMultipleCollections(

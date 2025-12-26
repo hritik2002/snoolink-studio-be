@@ -24,7 +24,7 @@ export class ResourceProcessingService {
   private getVectorDB(userId: string): VectorDBService {
     if (!this.db || this.currentUserId !== userId) {
       const namespace = createUserNamespace(userId, "image");
-      this.db = new VectorDBService(namespace);
+      this.db = new VectorDBService(namespace, userId);
       this.currentUserId = userId;
     }
     return this.db;
@@ -33,11 +33,15 @@ export class ResourceProcessingService {
   // Get VectorDBService for a specific collection (images)
   private getCollectionVectorDB(userId: string, collectionName: string): VectorDBService {
     const namespace = createCollectionNamespace(userId, collectionName, "image");
-    return new VectorDBService(namespace);
+    return new VectorDBService(namespace, userId);
   }
 
-  async describeImage(imageUrl: string): Promise<string> {
-    return this.llmClient.describeImage(imageUrl);
+  async describeImage(
+    imageUrl: string,
+    userId: string,
+    metadata?: { collectionName?: string; resourceType?: string; endpoint?: string }
+  ): Promise<string> {
+    return this.llmClient.describeImage(imageUrl, userId, metadata);
   }
 
   async embedImage({
@@ -154,7 +158,13 @@ export class ResourceProcessingService {
     return mergedResults.slice(0, topK);
   }
 
-  async expandQuery(query: string): Promise<string> {
-    return this.llmClient.ask(query, EXPAND_QUERY_SYSTEM_PROMPT);
+  async expandQuery(query: string, userId: string, endpoint?: string): Promise<string> {
+    return this.llmClient.ask(
+      query,
+      EXPAND_QUERY_SYSTEM_PROMPT,
+      userId,
+      "query_expansion",
+      { endpoint, context: "Query expansion for semantic search" }
+    );
   }
 }
