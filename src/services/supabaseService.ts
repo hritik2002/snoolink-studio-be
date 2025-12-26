@@ -81,6 +81,73 @@ export class SupabaseService {
     }));
   }
 
+  /**
+   * Get paginated resources (images and videos) for a user
+   */
+  async getResourcesPaginated(
+    userId: string,
+    options: {
+      collectionName?: string;
+      resourceType?: "image" | "video";
+      limit?: number;
+      offset?: number;
+    } = {}
+  ) {
+    const { collectionName, resourceType, limit = 20, offset = 0 } = options;
+
+    // Build the query for counting
+    let countQuery = this.supabaseClient
+      .from("collections")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", userId);
+
+    if (collectionName) {
+      countQuery = countQuery.eq("collection_name", collectionName);
+    }
+    if (resourceType) {
+      countQuery = countQuery.eq("resource_type", resourceType);
+    }
+
+    const { count, error: countError } = await countQuery;
+    if (countError) throw countError;
+
+    // Build the query for data
+    let dataQuery = this.supabaseClient
+      .from("collections")
+      .select("*")
+      .eq("user_id", userId);
+
+    if (collectionName) {
+      dataQuery = dataQuery.eq("collection_name", collectionName);
+    }
+    if (resourceType) {
+      dataQuery = dataQuery.eq("resource_type", resourceType);
+    }
+
+    const { data, error } = await dataQuery
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) throw error;
+
+    const items = data.map((item) => ({
+      id: item.id,
+      url: item.resource_url,
+      type: item.resource_type as "image" | "video",
+      description: item.description,
+      collectionName: item.collection_name,
+      createdAt: item.created_at,
+    }));
+
+    return {
+      items,
+      total: count || 0,
+      limit,
+      offset,
+      hasMore: offset + items.length < (count || 0),
+    };
+  }
+
   async postVideos(
     videos: { id: string; description: string; videoUrl: string }[],
     userId: string,

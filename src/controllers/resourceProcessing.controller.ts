@@ -116,6 +116,18 @@ class ResourceProcessingController {
     return videos;
   }
 
+  async getResourcesPaginated(
+    userId: string,
+    options: {
+      collectionName?: string;
+      resourceType?: "image" | "video";
+      limit?: number;
+      offset?: number;
+    } = {}
+  ) {
+    return await this.supabaseService.getResourcesPaginated(userId, options);
+  }
+
   async searchImages(
     query: string,
     userId: string,

@@ -18,6 +18,32 @@ router.get("/get-all-videos", async (req, res) => {
   res.json({ success: true, data: results });
 });
 
+/**
+ * GET /api/media/resources
+ * Paginated endpoint for fetching resources (images and videos)
+ * Query params: collection, type, limit, offset
+ */
+router.get("/resources", async (req, res) => {
+  try {
+    const { collection, type, limit, offset } = req.query;
+    
+    const results = await resourceProcessingController.getResourcesPaginated(
+      req.user!.id,
+      {
+        collectionName: collection as string | undefined,
+        resourceType: type as "image" | "video" | undefined,
+        limit: limit ? parseInt(limit as string, 10) : 20,
+        offset: offset ? parseInt(offset as string, 10) : 0,
+      }
+    );
+    
+    res.json({ success: true, data: results });
+  } catch (error: any) {
+    console.error("Error fetching paginated resources:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.post("/upload-images", async (req, res) => {
   try {
     const { urls, collectionName = "Default" } = req.body;
