@@ -5,7 +5,9 @@ import { imageQueueService } from "../services/imageQueue.service";
 import { videoQueueService } from "../services/videoQueue.service";
 import { loggingService } from "../services/logging.service";
 import { VideoProcessingService } from "../services/videoProcessing.service";
+import { redisService } from "../services/redis.service";
 import { v4 as uuidv4 } from "uuid";
+import crypto from "crypto";
 
 class ResourceProcessingController {
   private resourceProcessingService: ResourceProcessingService;
@@ -130,6 +132,27 @@ class ResourceProcessingController {
     return await this.supabaseService.getResourcesPaginated(userId, options);
   }
 
+  /**
+   * Generate cache key for search queries
+   */
+  private getSearchCacheKey(
+    userId: string,
+    query: string,
+    collections: string[],
+    topK: number,
+    type: "image" | "video"
+  ): string {
+    // Sort collections to ensure consistent cache key
+    const sortedCollections = [...collections].sort().join(",");
+    // Create hash of query to keep key length manageable
+    const queryHash = crypto
+      .createHash("md5")
+      .update(query.toLowerCase().trim())
+      .digest("hex")
+      .substring(0, 16);
+    return `search:${type}:${userId}:${queryHash}:${sortedCollections}:${topK}`;
+  }
+
   async searchImages(
     query: string,
     userId: string,
@@ -149,10 +172,33 @@ class ResourceProcessingController {
         endpoint
       );
 
+      // Check cache first
+      const cacheKey = this.getSearchCacheKey(
+        userId,
+        expandedQuery,
+        ["Default"],
+        5,
+        "image"
+      );
+      const cached = await redisService.get<any>(cacheKey);
+      if (cached) {
+        console.log(`Cache hit for image search: ${cacheKey}`);
+        return cached;
+      }
+
       results = await this.resourceProcessingService.searchImages({
         query: expandedQuery,
         userId,
       });
+
+      const response = {
+        results,
+        expandedQuery,
+        collectionsSearched: ["Default"],
+      };
+
+      // Cache the results (15 minutes TTL for search results)
+      await redisService.set(cacheKey, response, 900);
 
       const responseTime = Date.now() - startTime;
 
@@ -161,14 +207,14 @@ class ResourceProcessingController {
         user_id: userId,
         user_query: query,
         enhanced_query: expandedQuery,
-        response: results,
+        response: response,
         error: null,
         endpoint,
         method,
         response_time_ms: responseTime,
       });
 
-      return results;
+      return response;
     } catch (err: any) {
       error = err?.message || "Unknown error occurred";
       const responseTime = Date.now() - startTime;
@@ -217,12 +263,35 @@ class ResourceProcessingController {
         endpoint
       );
 
+      // Check cache first
+      const cacheKey = this.getSearchCacheKey(
+        userId,
+        query,
+        collections,
+        topK,
+        "image"
+      );
+      const cached = await redisService.get<any>(cacheKey);
+      if (cached) {
+        console.log(`Cache hit for image search: ${cacheKey}`);
+        return cached;
+      }
+
       results = await this.resourceProcessingService.searchMultipleCollections({
         query: expandedQuery,
         userId,
         collections,
         topK,
       });
+
+      const response = {
+        results,
+        expandedQuery,
+        collectionsSearched: collections,
+      };
+
+      // Cache the results (15 minutes TTL for search results)
+      await redisService.set(cacheKey, response, 900);
 
       const responseTime = Date.now() - startTime;
 
@@ -231,18 +300,14 @@ class ResourceProcessingController {
         user_id: userId,
         user_query: query,
         enhanced_query: expandedQuery,
-        response: results,
+        response: response,
         error: null,
         endpoint,
         method,
         response_time_ms: responseTime,
       });
 
-      return {
-        results,
-        expandedQuery,
-        collectionsSearched: collections,
-      };
+      return response;
     } catch (err: any) {
       error = err?.message || "Unknown error occurred";
       const responseTime = Date.now() - startTime;
@@ -350,7 +415,11 @@ class ResourceProcessingController {
   /**
    * Queue a video for processing (async)
    */
-  async queueVideo(videoUrl: string, userId: string, collectionName: string = "Default"): Promise<{ jobId: string }> {
+  async queueVideo(
+    videoUrl: string,
+    userId: string,
+    collectionName: string = "Default"
+  ): Promise<{ jobId: string }> {
     const jobId = uuidv4();
     const job = await videoQueueService.addVideoJob({
       videoUrl,
@@ -398,14 +467,16 @@ class ResourceProcessingController {
     query: string,
     userId: string,
     topK: number = 5
-  ): Promise<Array<{
-    id: string;
-    score: number;
-    text: string;
-    videoUrl?: string;
-    startTime?: string;
-    endTime?: string;
-  }>> {
+  ): Promise<
+    Array<{
+      id: string;
+      score: number;
+      text: string;
+      videoUrl?: string;
+      startTime?: string;
+      endTime?: string;
+    }>
+  > {
     return await this.videoProcessingService.searchVideos(query, userId, topK);
   }
 
@@ -426,6 +497,18 @@ class ResourceProcessingController {
     let error: string | null = null;
 
     try {
+      const cacheKey = this.getSearchCacheKey(
+        userId,
+        query,
+        collections,
+        topK,
+        "video"
+      );
+      const cached = await redisService.get<any>(cacheKey);
+      if (cached) {
+        return cached;
+      }
+
       expandedQuery = await this.resourceProcessingService.expandQuery(
         `User Query: "${query}"
         Expanded:`,
@@ -433,12 +516,52 @@ class ResourceProcessingController {
         endpoint
       );
 
-      results = await this.videoProcessingService.searchVideosMultipleCollections(
+      const groupedResults =
+        await this.videoProcessingService.searchVideosMultipleCollections(
+          expandedQuery,
+          userId,
+          collections,
+          topK
+        );
+
+      // Enrich results with video metadata from database
+      // groupedResults is now an object with videoUrl as keys
+      const enrichedResults: Record<string, any> = {};
+
+      for (const [videoUrl, videoResult] of Object.entries(groupedResults)) {
+        try {
+          // Fetch video metadata from database
+          const videoMetadata =
+            await this.supabaseService.getVideoMetadataByUrl(userId, videoUrl);
+
+          enrichedResults[videoUrl] = {
+            ...videoResult,
+            videoId: videoMetadata?.id,
+            title: this.extractVideoTitle(videoUrl),
+            duration: videoMetadata?.duration,
+            resolution: videoMetadata?.resolution,
+          };
+        } catch (error) {
+          console.error(
+            `Error fetching metadata for video ${videoUrl}:`,
+            error
+          );
+          // Return result without metadata if fetch fails
+          enrichedResults[videoUrl] = {
+            ...videoResult,
+            title: this.extractVideoTitle(videoUrl),
+          };
+        }
+      }
+
+      const response = {
+        results: enrichedResults,
         expandedQuery,
-        userId,
-        collections,
-        topK
-      );
+        collectionsSearched: collections,
+      };
+
+      // Cache the results (15 minutes TTL for search results)
+      await redisService.set(cacheKey, response, 900);
 
       const responseTime = Date.now() - startTime;
 
@@ -447,18 +570,14 @@ class ResourceProcessingController {
         user_id: userId,
         user_query: query,
         enhanced_query: expandedQuery,
-        response: results,
+        response: response,
         error: null,
         endpoint,
         method,
         response_time_ms: responseTime,
       });
 
-      return {
-        results,
-        expandedQuery,
-        collectionsSearched: collections,
-      };
+      return response;
     } catch (err: any) {
       error = err?.message || "Unknown error occurred";
       const responseTime = Date.now() - startTime;
@@ -476,6 +595,22 @@ class ResourceProcessingController {
       });
 
       throw err;
+    }
+  }
+
+  /**
+   * Extract video title from URL
+   */
+  private extractVideoTitle(videoUrl: string): string {
+    try {
+      const url = new URL(videoUrl);
+      const pathname = url.pathname;
+      const filename = pathname.split("/").pop() || "";
+      // Remove extension and decode
+      const title = decodeURIComponent(filename.split(".")[0] || filename);
+      return title || "Video";
+    } catch {
+      return "Video";
     }
   }
 
@@ -502,23 +637,21 @@ class ResourceProcessingController {
     const jobs = await Promise.all(
       jobIds.map((id) => videoQueueService.getJob(id))
     );
-    
+
     // Filter out null jobs and verify ownership
-    const validJobs = jobs.filter(
-      (job) => job !== null && job !== undefined
-    );
-    
-    const userJobs = validJobs.filter(
-      (job) => job.data?.userId === userId
-    );
-    
+    const validJobs = jobs.filter((job) => job !== null && job !== undefined);
+
+    const userJobs = validJobs.filter((job) => job.data?.userId === userId);
+
     if (userJobs.length === 0 && jobIds.length > 0) {
       throw new Error("No valid jobs found or all jobs do not belong to user");
     }
 
     // Only remove jobs that belong to the user
-    const userJobIds = userJobs.map((job) => job.id).filter(Boolean) as string[];
-    
+    const userJobIds = userJobs
+      .map((job) => job.id)
+      .filter(Boolean) as string[];
+
     if (userJobIds.length === 0) {
       return 0;
     }
@@ -534,23 +667,21 @@ class ResourceProcessingController {
     const jobs = await Promise.all(
       jobIds.map((id) => videoQueueService.getJob(id))
     );
-    
+
     // Filter out null jobs and verify ownership
-    const validJobs = jobs.filter(
-      (job) => job !== null && job !== undefined
-    );
-    
-    const userJobs = validJobs.filter(
-      (job) => job.data?.userId === userId
-    );
-    
+    const validJobs = jobs.filter((job) => job !== null && job !== undefined);
+
+    const userJobs = validJobs.filter((job) => job.data?.userId === userId);
+
     if (userJobs.length === 0 && jobIds.length > 0) {
       throw new Error("No valid jobs found or all jobs do not belong to user");
     }
 
     // Only re-queue jobs that belong to the user
-    const userJobIds = userJobs.map((job) => job.id).filter(Boolean) as string[];
-    
+    const userJobIds = userJobs
+      .map((job) => job.id)
+      .filter(Boolean) as string[];
+
     if (userJobIds.length === 0) {
       return [];
     }

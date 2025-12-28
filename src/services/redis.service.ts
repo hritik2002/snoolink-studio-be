@@ -171,6 +171,16 @@ class RedisService {
     // Also invalidate collections list
     await this.delete(`collections:${userId}:list`);
   }
+
+  /**
+   * Invalidate all search cache for a user
+   */
+  async invalidateSearchCache(userId: string, type?: "image" | "video"): Promise<void> {
+    const pattern = type 
+      ? `search:${type}:${userId}:*`
+      : `search:*:${userId}:*`;
+    await this.deletePattern(pattern);
+  }
 }
 
 export const redisService = new RedisService();

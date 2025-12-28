@@ -6,7 +6,6 @@ import { VectorDBService } from "./vectordb.service";
 interface SearchResult {
   id: string;
   score: number;
-  text: string;
   imageUrl: string;
   collectionName?: string;
 }
@@ -79,7 +78,6 @@ export class ResourceProcessingService {
       res.matches.map((m) => ({
         id: m.id,
         score: m.score,
-        text: m.metadata?.description ?? "",
         imageUrl: m.metadata?.imageUrl ?? "",
       }))
     );
@@ -123,7 +121,6 @@ export class ResourceProcessingService {
             return legacyResults.matches.map((m) => ({
               id: m.id,
               score: m.score ?? 0,
-              text: (m.metadata?.description as string) ?? "",
               imageUrl: (m.metadata?.imageUrl as string) ?? "",
               collectionName,
             }));
@@ -135,7 +132,6 @@ export class ResourceProcessingService {
         return results.matches.map((m) => ({
           id: m.id,
           score: m.score ?? 0,
-          text: (m.metadata?.description as string) ?? "",
           imageUrl: (m.metadata?.imageUrl as string) ?? "",
           collectionName,
         }));

@@ -566,24 +566,30 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
 
   /**
    * Search videos across multiple collections using Promise.all
-   * Results are merged and sorted by score
+   * Results are grouped by videoUrl and returned as an object with videoUrl as key
    */
   async searchVideosMultipleCollections(
     query: string,
     userId: string,
     collections: string[],
     topK: number = 5
-  ): Promise<Array<{
-    id: string;
-    score: number;
-    text: string;
-    videoUrl?: string;
-    startTime?: string;
-    endTime?: string;
+  ): Promise<Record<string, {
+    videoUrl: string;
+    videoId?: number;
+    title?: string;
+    duration?: number;
+    resolution?: string;
     collectionName?: string;
+    clips: Array<{
+      id: string;
+      score: number;
+      startTime: string;
+      endTime: string;
+    }>;
+    bestScore: number; // Highest score among all clips for sorting
   }>> {
     if (collections.length === 0) {
-      return [];
+      return {};
     }
 
     // Create search promises for each collection
@@ -592,7 +598,7 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
         // Use collection-based namespace for videos
         const namespace = createCollectionNamespace(userId, collectionName, "video");
         const vectorDB = new VectorDBService(namespace);
-        const results = await vectorDB.query(query, topK);
+        const results = await vectorDB.query(query, topK * 3); // Get more results to group
 
         // If searching "Default" and no results, also try legacy namespace for backward compatibility
         if (collectionName === "Default" && results.matches.length === 0) {
@@ -600,7 +606,7 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
           try {
             const legacyNamespace = createUserNamespace(userId, "video"); // Legacy: user-{userId}-videos
             const legacyVectorDB = new VectorDBService(legacyNamespace);
-            const legacyResults = await legacyVectorDB.query(query, topK);
+            const legacyResults = await legacyVectorDB.query(query, topK * 3);
             return legacyResults.matches.map((m) => ({
               id: m.id || "",
               score: m.score || 0,
@@ -636,11 +642,122 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
     // Flatten and merge results
     const mergedResults = allResults.flat();
 
-    // Sort by score descending
-    mergedResults.sort((a, b) => b.score - a.score);
+    // Group ALL clips by videoUrl - every clip with the same videoUrl goes into the same group
+    const groupedByVideo = new Map<string, {
+      videoUrl: string;
+      collectionName?: string;
+      clips: Array<{
+        id: string;
+        score: number;
+        startTime: string;
+        endTime: string;
+      }>;
+      bestScore: number;
+      // Track unique clips to avoid duplicates within the same video
+      uniqueClips: Set<string>; // Key: "startTime-endTime" or "id"
+    }>();
 
-    // Return top K results across all collections
-    return mergedResults.slice(0, topK);
+    // Process all results and group by videoUrl
+    for (const result of mergedResults) {
+      // Skip results without videoUrl (they can't be grouped)
+      if (!result.videoUrl) {
+        console.warn(`Skipping result without videoUrl: ${result.id}`);
+        continue;
+      }
+
+      // Use videoUrl as the grouping key - all clips from the same videoUrl go to the same group
+      const videoKey = result.videoUrl;
+      
+      // Create group if it doesn't exist
+      if (!groupedByVideo.has(videoKey)) {
+        groupedByVideo.set(videoKey, {
+          videoUrl: result.videoUrl,
+          collectionName: result.collectionName,
+          clips: [],
+          bestScore: result.score,
+          uniqueClips: new Set(),
+        });
+      }
+
+      // Get the group for this videoUrl - ALL clips from this videoUrl are added here
+      const group = groupedByVideo.get(videoKey)!;
+      
+      // Add clip to the group if it has valid timestamps
+      if (result.startTime && result.endTime) {
+        // Create a unique key for this clip: prefer ID if available, otherwise use time range
+        const clipKey = result.id || `${result.startTime}-${result.endTime}`;
+        
+        // Only add if we haven't seen this exact clip before (deduplication)
+        if (!group.uniqueClips.has(clipKey)) {
+          group.uniqueClips.add(clipKey);
+          // Add this clip to the video's clips array
+          group.clips.push({
+            id: result.id,
+            score: result.score,
+            startTime: result.startTime,
+            endTime: result.endTime,
+          });
+        } else {
+          // If duplicate clip found (same time range or ID), keep the one with better score
+          const existingClip = group.clips.find(
+            c => c.id === result.id || (c.startTime === result.startTime && c.endTime === result.endTime)
+          );
+          if (existingClip && result.score > existingClip.score) {
+            existingClip.score = result.score;
+            existingClip.id = result.id; // Update ID if available
+          }
+        }
+      } else {
+        console.warn(`Skipping clip without valid timestamps for videoUrl ${videoKey}: ${result.id}`);
+      }
+
+      // Update best score for this video group
+      if (result.score > group.bestScore) {
+        group.bestScore = result.score;
+      }
+    }
+
+    // Convert Map to object structure with videoUrl as key
+    const groupedResultsObject: Record<string, {
+      videoUrl: string;
+      videoId?: number;
+      title?: string;
+      description?: string;
+      duration?: number;
+      resolution?: string;
+      collectionName?: string;
+      clips: Array<{
+        id: string;
+        score: number;
+        startTime: string;
+        endTime: string;
+      }>;
+      bestScore: number;
+    }> = {};
+
+    // Remove the uniqueClips Set and convert to object
+    for (const [videoUrl, group] of groupedByVideo.entries()) {
+      const { uniqueClips, ...rest } = group;
+      
+      // Sort clips within each group by score (best matches first)
+      rest.clips.sort((a, b) => b.score - a.score);
+      
+      groupedResultsObject[videoUrl] = rest;
+    }
+
+    // Sort video URLs by best score and limit to topK
+    const sortedVideoUrls = Object.entries(groupedResultsObject)
+      .sort(([, a], [, b]) => b.bestScore - a.bestScore)
+      .slice(0, topK)
+      .map(([videoUrl]) => videoUrl);
+
+    // Return only the top K videos as an object
+    const topResults: Record<string, typeof groupedResultsObject[string]> = {};
+    for (const videoUrl of sortedVideoUrls) {
+      topResults[videoUrl] = groupedResultsObject[videoUrl];
+    }
+
+    return topResults;
   }
 
   /**

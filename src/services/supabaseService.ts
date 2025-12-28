@@ -75,6 +75,8 @@ export class SupabaseService {
     // Also invalidate images cache
     await redisService.delete(`images:${userId}:${collectionName}`);
     await redisService.delete(`images:${userId}:all`);
+    // Invalidate image search cache
+    await redisService.invalidateSearchCache(userId, "image");
 
     return data?.map((d) => ({ id: d.id })) || null;
   }
@@ -234,6 +236,8 @@ export class SupabaseService {
     // Also invalidate videos cache
     await redisService.delete(`videos:${userId}:${collectionName}`);
     await redisService.delete(`videos:${userId}:all`);
+    // Invalidate video search cache
+    await redisService.invalidateSearchCache(userId, "video");
 
     return data?.map((d) => ({ id: d.id })) || null;
   }
@@ -770,5 +774,47 @@ export class SupabaseService {
     collectionName: string
   ): Promise<{ id: number }[] | null> {
     return this.postVideos(videos, userId, collectionName);
+  }
+
+  /**
+   * Get video metadata by URL
+   */
+  async getVideoMetadataByUrl(
+    userId: string,
+    videoUrl: string
+  ): Promise<{
+    id: number;
+    description: string;
+    duration?: number;
+    resolution?: string;
+    collectionName: string;
+  } | null> {
+    const { data, error } = await this.supabaseClient
+      .from("collections")
+      .select("id, description, duration, resolution, collection_name")
+      .eq("user_id", userId)
+      .eq("resource_type", "video")
+      .eq("resource_url", videoUrl)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error) {
+      // If no single result, return null (video might not be in DB yet)
+      if (error.code === 'PGRST116') {
+        return null;
+      }
+      throw error;
+    }
+
+    if (!data) return null;
+
+    return {
+      id: data.id,
+      description: data.description || "",
+      duration: data.duration ? parseFloat(data.duration.toString()) : undefined,
+      resolution: data.resolution || undefined,
+      collectionName: data.collection_name,
+    };
   }
 }
