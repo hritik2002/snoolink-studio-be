@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { CONFIG } from "../config";
+import { redisService } from "./redis.service";
 
 export class SupabaseService {
   private supabaseClient: SupabaseClient;
@@ -13,6 +14,15 @@ export class SupabaseService {
   // ============ Resource Methods ============
 
   async getImages(userId: string, collectionName?: string) {
+    // Build cache key
+    const cacheKey = `images:${userId}:${collectionName || "all"}`;
+
+    // Try to get from cache
+    const cached = await redisService.get<any[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     let query = this.supabaseClient
       .from("collections")
       .select("*")
@@ -26,13 +36,18 @@ export class SupabaseService {
     const { data, error } = await query.order("created_at", { ascending: false });
     if (error) throw error;
 
-    return data.map((image) => ({
+    const result = data.map((image) => ({
       id: image.id,
       imageUrl: image.resource_url,
       description: image.description,
       collectionName: image.collection_name,
       createdAt: image.created_at,
     }));
+
+    // Cache the result (30 minutes TTL)
+    await redisService.set(cacheKey, result, 1800);
+
+    return result;
   }
 
   async postImages(
@@ -55,10 +70,25 @@ export class SupabaseService {
 
     if (error) throw error;
 
+    // Invalidate cache for this collection and user
+    await redisService.invalidateResourcesCache(userId, collectionName);
+    // Also invalidate images cache
+    await redisService.delete(`images:${userId}:${collectionName}`);
+    await redisService.delete(`images:${userId}:all`);
+
     return data?.map((d) => ({ id: d.id })) || null;
   }
 
   async getVideos(userId: string, collectionName?: string) {
+    // Build cache key
+    const cacheKey = `videos:${userId}:${collectionName || "all"}`;
+
+    // Try to get from cache
+    const cached = await redisService.get<any[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     let query = this.supabaseClient
       .from("collections")
       .select("*")
@@ -72,7 +102,7 @@ export class SupabaseService {
     const { data, error } = await query.order("created_at", { ascending: false });
     if (error) throw error;
 
-    return data.map((video) => ({
+    const result = data.map((video) => ({
       id: video.id,
       videoUrl: video.resource_url,
       description: video.description,
@@ -81,6 +111,11 @@ export class SupabaseService {
       duration: video.duration ? parseFloat(video.duration.toString()) : undefined,
       resolution: video.resolution || undefined,
     }));
+
+    // Cache the result (30 minutes TTL)
+    await redisService.set(cacheKey, result, 1800);
+
+    return result;
   }
 
   /**
@@ -96,6 +131,15 @@ export class SupabaseService {
     } = {}
   ) {
     const { collectionName, resourceType, limit = 20, offset = 0 } = options;
+
+    // Build cache key
+    const cacheKey = `resources:${userId}:paginated:${collectionName || "all"}:${resourceType || "all"}:${limit}:${offset}`;
+
+    // Try to get from cache
+    const cached = await redisService.get<any>(cacheKey);
+    if (cached) {
+      return cached;
+    }
 
     // Build the query for counting
     let countQuery = this.supabaseClient
@@ -143,13 +187,18 @@ export class SupabaseService {
       resolution: item.resolution || undefined,
     }));
 
-    return {
+    const result = {
       items,
       total: count || 0,
       limit,
       offset,
       hasMore: offset + items.length < (count || 0),
     };
+
+    // Cache the result (15 minutes TTL for paginated results)
+    await redisService.set(cacheKey, result, 900);
+
+    return result;
   }
 
   async postVideos(
@@ -180,44 +229,66 @@ export class SupabaseService {
 
     if (error) throw error;
 
+    // Invalidate cache for this collection and user
+    await redisService.invalidateResourcesCache(userId, collectionName);
+    // Also invalidate videos cache
+    await redisService.delete(`videos:${userId}:${collectionName}`);
+    await redisService.delete(`videos:${userId}:all`);
+
     return data?.map((d) => ({ id: d.id })) || null;
   }
 
   // ============ Profile Methods ============
 
   async getProfile(userId: string) {
+    // Build cache key
+    const cacheKey = `profile:${userId}`;
+
+    // Try to get from cache
+    const cached = await redisService.get<any>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const { data: profileData, error: profileError } = await this.supabaseClient
       .from("profiles")
       .select("*")
       .eq("id", userId)
       .single();
 
+    let result;
+
     if (!profileError && profileData) {
-      return {
+      result = {
         id: profileData.id,
         name: profileData.name || null,
         email: profileData.email || null,
       };
+    } else {
+      try {
+        const { data: userData, error: userError } =
+          await this.supabaseClient.auth.admin.getUserById(userId);
+
+        if (userError) throw userError;
+
+        result = {
+          id: userData.user.id,
+          name: userData.user.user_metadata?.name || null,
+          email: userData.user.email || null,
+        };
+      } catch (error) {
+        result = {
+          id: userId,
+          name: null,
+          email: null,
+        };
+      }
     }
 
-    try {
-      const { data: userData, error: userError } =
-        await this.supabaseClient.auth.admin.getUserById(userId);
+    // Cache the result (1 hour TTL for profiles)
+    await redisService.set(cacheKey, result, 3600);
 
-      if (userError) throw userError;
-
-      return {
-        id: userData.user.id,
-        name: userData.user.user_metadata?.name || null,
-        email: userData.user.email || null,
-      };
-    } catch (error) {
-      return {
-        id: userId,
-        name: null,
-        email: null,
-      };
-    }
+    return result;
   }
 
   async updateProfile(
@@ -239,28 +310,35 @@ export class SupabaseService {
         .select()
         .single();
 
+    let result;
+
     if (!profileError && profileTableData) {
-      return profileTableData;
+      result = profileTableData;
+    } else {
+      try {
+        const { data: updateData, error: updateError } =
+          await this.supabaseClient.auth.admin.updateUserById(userId, {
+            user_metadata: {
+              name: profileData.name,
+            },
+          });
+
+        if (updateError) throw updateError;
+
+        result = {
+          id: updateData.user.id,
+          name: updateData.user.user_metadata?.name || null,
+          email: updateData.user.email || null,
+        };
+      } catch (error: any) {
+        throw new Error(`Failed to update profile: ${error.message}`);
+      }
     }
 
-    try {
-      const { data: updateData, error: updateError } =
-        await this.supabaseClient.auth.admin.updateUserById(userId, {
-          user_metadata: {
-            name: profileData.name,
-          },
-        });
+    // Invalidate profile cache
+    await redisService.delete(`profile:${userId}`);
 
-      if (updateError) throw updateError;
-
-      return {
-        id: updateData.user.id,
-        name: updateData.user.user_metadata?.name || null,
-        email: updateData.user.email || null,
-      };
-    } catch (error: any) {
-      throw new Error(`Failed to update profile: ${error.message}`);
-    }
+    return result;
   }
 
   /**
@@ -362,6 +440,9 @@ export class SupabaseService {
 
     if (error) throw error;
 
+    // Invalidate collections list cache
+    await redisService.delete(`collections:${userId}:list`);
+
     return {
       name: collectionName,
       pineconeNamespace: this.getPineconeNamespace(userId, collectionName),
@@ -377,6 +458,15 @@ export class SupabaseService {
    * Combines collections from metadata table (including empty ones) and resource table
    */
   async getCollections(userId: string) {
+    // Build cache key
+    const cacheKey = `collections:${userId}:list`;
+
+    // Try to get from cache
+    const cached = await redisService.get<any[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     // Get collections from metadata table (includes empty collections)
     const { data: metadataCollections, error: metaError } = await this.supabaseClient
       .from("collection_metadata")
@@ -446,6 +536,9 @@ export class SupabaseService {
       thumbnailUrl: stats.thumbnailUrl,
     }));
 
+    // Cache the result (30 minutes TTL)
+    await redisService.set(cacheKey, collections, 1800);
+
     return collections;
   }
 
@@ -453,6 +546,15 @@ export class SupabaseService {
    * Get a single collection info by name
    */
   async getCollection(userId: string, collectionName: string) {
+    // Build cache key
+    const cacheKey = `collections:${userId}:${collectionName}`;
+
+    // Try to get from cache
+    const cached = await redisService.get<any>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const { data, error } = await this.supabaseClient
       .from("collections")
       .select("*")
@@ -465,13 +567,18 @@ export class SupabaseService {
     const videoCount = data.filter(r => r.resource_type === "video").length;
     const firstImage = data.find(r => r.resource_type === "image");
 
-    return {
+    const result = {
       name: collectionName,
       pineconeNamespace: this.getPineconeNamespace(userId, collectionName),
       imageCount,
       videoCount,
       thumbnailUrl: firstImage?.resource_url || null,
     };
+
+    // Cache the result (30 minutes TTL)
+    await redisService.set(cacheKey, result, 1800);
+
+    return result;
   }
 
   /**
@@ -489,6 +596,11 @@ export class SupabaseService {
       .select();
 
     if (error) throw error;
+
+    // Invalidate cache for both old and new collection names
+    await redisService.invalidateCollectionCache(userId, oldName);
+    await redisService.invalidateCollectionCache(userId, newName);
+    await redisService.delete(`collections:${userId}:list`);
 
     return {
       name: newName,
@@ -508,6 +620,11 @@ export class SupabaseService {
       .eq("collection_name", collectionName);
 
     if (error) throw error;
+
+    // Invalidate cache for this collection
+    await redisService.invalidateCollectionCache(userId, collectionName);
+    await redisService.delete(`collections:${userId}:list`);
+
     return { success: true, deletedCount: count || 0 };
   }
 
@@ -519,6 +636,16 @@ export class SupabaseService {
     collectionName: string,
     resourceType?: "image" | "video"
   ) {
+    // Build cache key
+    const cacheKey = `resources:${userId}:${collectionName}:${resourceType || "all"}`;
+
+    // Try to get from cache
+    const cached = await redisService.get<any[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    // Fetch from database
     let query = this.supabaseClient
       .from("collections")
       .select("*")
@@ -533,7 +660,7 @@ export class SupabaseService {
 
     if (error) throw error;
 
-    return data.map((resource) => ({
+    const result = data.map((resource) => ({
       id: resource.id,
       resourceUrl: resource.resource_url,
       resourceType: resource.resource_type,
@@ -541,6 +668,11 @@ export class SupabaseService {
       collectionName: resource.collection_name,
       createdAt: resource.created_at,
     }));
+
+    // Cache the result (30 minutes TTL)
+    await redisService.set(cacheKey, result, 1800);
+
+    return result;
   }
 
   /**
@@ -551,6 +683,13 @@ export class SupabaseService {
     resourceIds: number[],
     targetCollectionName: string
   ) {
+    // First, get the current collection names for these resources to invalidate their cache
+    const { data: currentResources } = await this.supabaseClient
+      .from("collections")
+      .select("collection_name")
+      .eq("user_id", userId)
+      .in("id", resourceIds);
+
     const { data, error } = await this.supabaseClient
       .from("collections")
       .update({ 
@@ -562,6 +701,19 @@ export class SupabaseService {
       .select();
 
     if (error) throw error;
+
+    // Invalidate cache for all affected collections
+    const affectedCollections = new Set<string>();
+    if (currentResources) {
+      currentResources.forEach(r => affectedCollections.add(r.collection_name));
+    }
+    affectedCollections.add(targetCollectionName);
+    
+    for (const collectionName of affectedCollections) {
+      await redisService.invalidateCollectionCache(userId, collectionName);
+    }
+    await redisService.delete(`collections:${userId}:list`);
+
     return data;
   }
 
@@ -569,6 +721,13 @@ export class SupabaseService {
    * Delete resources by IDs
    */
   async deleteResources(userId: string, resourceIds: number[]) {
+    // First, get the collection names for these resources to invalidate their cache
+    const { data: resourcesToDelete } = await this.supabaseClient
+      .from("collections")
+      .select("collection_name")
+      .eq("user_id", userId)
+      .in("id", resourceIds);
+
     const { error, count } = await this.supabaseClient
       .from("collections")
       .delete({ count: "exact" })
@@ -576,6 +735,18 @@ export class SupabaseService {
       .in("id", resourceIds);
 
     if (error) throw error;
+
+    // Invalidate cache for affected collections
+    if (resourcesToDelete) {
+      const affectedCollections = new Set<string>();
+      resourcesToDelete.forEach(r => affectedCollections.add(r.collection_name));
+      
+      for (const collectionName of affectedCollections) {
+        await redisService.invalidateCollectionCache(userId, collectionName);
+      }
+    }
+    await redisService.delete(`collections:${userId}:list`);
+
     return { success: true, deletedCount: count || 0 };
   }
 
