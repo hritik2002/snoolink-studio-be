@@ -88,6 +88,8 @@ class VideoProcessingWorker {
             id: videoId,
             description: summaryDescription || "Video processed and indexed",
             videoUrl,
+            duration: result.duration,
+            resolution: result.resolution,
           },
         ],
         userId,

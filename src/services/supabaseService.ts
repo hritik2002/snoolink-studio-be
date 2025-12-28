@@ -78,6 +78,8 @@ export class SupabaseService {
       description: video.description,
       collectionName: video.collection_name,
       createdAt: video.created_at,
+      duration: video.duration ? parseFloat(video.duration.toString()) : undefined,
+      resolution: video.resolution || undefined,
     }));
   }
 
@@ -137,6 +139,8 @@ export class SupabaseService {
       description: item.description,
       collectionName: item.collection_name,
       createdAt: item.created_at,
+      duration: item.duration ? parseFloat(item.duration.toString()) : undefined,
+      resolution: item.resolution || undefined,
     }));
 
     return {
@@ -149,7 +153,13 @@ export class SupabaseService {
   }
 
   async postVideos(
-    videos: { id: string; description: string; videoUrl: string }[],
+    videos: { 
+      id: string; 
+      description: string; 
+      videoUrl: string;
+      duration?: number;
+      resolution?: string;
+    }[],
     userId: string,
     collectionName: string = "Default"
   ): Promise<{ id: number }[] | null> {
@@ -162,6 +172,8 @@ export class SupabaseService {
           resource_type: "video",
           user_id: userId,
           collection_name: collectionName,
+          duration: video.duration ? parseFloat(video.duration.toString()) : null,
+          resolution: video.resolution || null,
         }))
       )
       .select();

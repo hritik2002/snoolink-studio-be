@@ -71,6 +71,22 @@ export class VideoProcessingService {
   }
 
   /**
+   * Get video resolution (width x height)
+   */
+  private async getVideoResolution(videoPath: string): Promise<string | null> {
+    try {
+      const { stdout } = await exec(
+        `ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "${videoPath}"`
+      );
+      const resolution = stdout.trim();
+      return resolution || null;
+    } catch (error) {
+      console.error(`Error getting video resolution:`, error);
+      return null;
+    }
+  }
+
+  /**
    * Extract 5-second video chunks
    */
   private async extractVideoChunks(
@@ -449,6 +465,8 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
     videoUrl: string;
     chunksIndexed: number;
     results: Array<{ chunkId: string; summary: string; start: number; end: number }>;
+    duration?: number;
+    resolution?: string;
   }> {
     // Use collection-based namespace for indexing videos
     const namespace = createCollectionNamespace(userId, collectionName, "video");
@@ -458,6 +476,20 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
     const videoPath = await this.downloadVideo(videoUrl);
 
     try {
+      // Extract video metadata (duration and resolution)
+      const [duration, resolution] = await Promise.all([
+        this.getVideoDuration(videoPath).catch((err) => {
+          console.error("Error getting video duration:", err);
+          return undefined;
+        }),
+        this.getVideoResolution(videoPath).catch((err) => {
+          console.error("Error getting video resolution:", err);
+          return undefined;
+        }),
+      ]);
+
+      console.log(`Video metadata - Duration: ${duration}s, Resolution: ${resolution}`);
+
       // Step 2: Extract 5-second chunks
       const chunksDir = path.join(this.tempDir, uuidv4());
       const chunks = await this.extractVideoChunks(
@@ -493,6 +525,8 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
         videoUrl,
         chunksIndexed: results.length,
         results,
+        duration,
+        resolution: resolution || undefined,
       };
     } finally {
       // Clean up downloaded video
