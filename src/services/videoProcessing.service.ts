@@ -110,7 +110,7 @@ export class VideoProcessingService {
       const outputFile = path.join(outputDir, `chunk_${index}.mp4`);
 
       await exec(
-        `ffmpeg -y -i "${videoPath}" -ss ${start} -t ${chunkSize} -c copy "${outputFile}"`
+        `ffmpeg -y -i "${videoPath}" -ss ${start} -t ${chunkSize} -c:v copy -an "${outputFile}"`
       );
 
       chunks.push({ filePath: outputFile, start, end, index });
