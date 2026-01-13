@@ -285,13 +285,49 @@ export class VideoProcessingService {
       .map((desc, idx) => `Frame ${idx + 1}: ${desc}`)
       .join("\n\n");
 
-    const prompt = `You are analyzing a 5-second video clip. Below are descriptions of 5 frames (one per second).
+    const prompt = `You are an expert video-understanding system that creates detailed, factual descriptions of video clips optimized for semantic search and vector embeddings.
 
-Frame Descriptions:
+You are analyzing a 5-second video clip. Below are descriptions of 5 frames (one per second):
 
 ${frameDescriptionsText}
 
-Generate a comprehensive summary of what's happening in this 5-second video clip, combining all the visual information from the frames. Be specific and detailed.`;
+Generate a comprehensive summary in 8-12 information-dense sentences that captures:
+
+1. Temporal progression and motion:
+   - What changes occur between frames (movement, transitions, actions)
+   - Direction and speed of any motion
+   - Continuity or changes in subjects, objects, or scenes
+   - Any actions, gestures, or interactions that develop over time
+
+2. Visual content across all frames:
+   - All visible subjects, objects, and their attributes (colors, shapes, sizes, materials)
+   - Clothing, accessories, physical attributes
+   - Spatial relationships and positioning (foreground/mid-ground/background)
+   - Any text, graphics, overlays, or UI elements visible
+
+3. Environment and setting:
+   - Location type (indoor/outdoor, room type, landscape, urban)
+   - Lighting conditions and any changes
+   - Background structure and depth
+   - Camera perspective, angle, and any camera movement
+
+4. Visual style and composition:
+   - Overall visual style (realistic, stylized, animated, etc.)
+   - Composition and framing
+   - Any special effects, filters, or visual treatments
+
+5. Semantic search categories:
+   - Add 2-3 sentences about object categories, scene types, themes, actions, and use-case categories this video clip represents
+   - Include temporal aspects (e.g., "walking", "transitioning", "static scene")
+   - Base this only on visible content across all frames
+
+Style:
+- Use natural, descriptive prose
+- Be specific and detailed about what is visible
+- Describe temporal changes and motion explicitly
+- Do not mention what is NOT in the video
+- Do not speculate about identity, emotions, or intent beyond what's visually apparent
+- Focus on factual visual observations that would help someone find this clip through semantic search`;
 
     const startTime = Date.now();
     let requestId: string | undefined;
@@ -309,7 +345,7 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
         ],
       });
 
-      requestId = response.id;
+      requestId = response._request_id ?? undefined;
       const responseTime = Date.now() - startTime;
 
       // Track cost
@@ -381,22 +417,15 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
     collectionName?: string
   ): Promise<{ chunkId: string; summary: string; start: number; end: number }> {
     const { filePath: chunkPath, start, end, index } = chunk;
-
-    console.log(`\nProcessing chunk ${index} (${start}s - ${end}s)...`);
-
     // Step 1: Extract frames (1 per second = 5 frames)
     const framesDir = path.join(tempDir, `frames_${index}`);
     const frameFiles = await this.extractFramesFromChunk(chunkPath, framesDir);
-
-    console.log(`Extracted ${frameFiles.length} frames`);
-
     // Step 2: Upload frames to Cloudinary, get descriptions, then delete
     const frameDescriptions: string[] = [];
 
     for (const framePath of frameFiles) {
       // Upload to Cloudinary
       const { url: frameUrl, publicId } = await this.uploadFrameToCloudinary(framePath);
-      console.log(`Uploaded frame: ${frameUrl}`);
 
       // Get GPT description
       const description = await this.describeFrameWithGPT(frameUrl, userId, {
@@ -405,7 +434,6 @@ Generate a comprehensive summary of what's happening in this 5-second video clip
         collectionName,
       });
       frameDescriptions.push(description);
-      console.log(`Frame description: ${description.substring(0, 100)}...`);
 
       // Delete from Cloudinary
       await this.deleteFrameFromCloudinary(publicId);
