@@ -40,6 +40,7 @@ class ResourceProcessingController {
           description,
           imageUrl: fileUrl,
           userId,
+          collectionName: "Default",
         });
 
         return {
@@ -52,10 +53,6 @@ class ResourceProcessingController {
           error: null,
         };
       } catch (error: any) {
-        console.error(
-          `Error processing image ${image.originalname || image.filename}:`,
-          error
-        );
         return {
           success: false,
           data: null,
@@ -75,11 +72,6 @@ class ResourceProcessingController {
       if (result.status === "fulfilled") {
         return result.value;
       } else {
-        // This should rarely happen since we catch errors inside the promise
-        console.error(
-          `Unexpected rejection for image at index ${index}:`,
-          result.reason
-        );
         return {
           success: false,
           data: null,
@@ -99,7 +91,6 @@ class ResourceProcessingController {
     const failed = processedResults.filter((r) => !r.success);
 
     if (failed.length > 0) {
-      console.error("Failed images:", failed);
     }
 
     // await this.supabaseService.postImages(successful.map(r => r.data), userId);
@@ -185,7 +176,6 @@ class ResourceProcessingController {
     // Check cache
     const cached = await redisService.get<any>(cacheKey);
     if (cached) {
-      console.log(`Cache hit for image search: ${cacheKey}`);
       return cached;
     }
 
@@ -208,28 +198,24 @@ class ResourceProcessingController {
                 userId,
                 endpoint
               ),
-              this.resourceProcessingService.getEmbedding(query, userId),
+              this.resourceProcessingService.getEmbedding(query, userId, collectionName),
             ]);
           } else {
-            // For short queries, still get embedding but don't expand
             expandedQueryResult = query;
-            embedding = await this.resourceProcessingService.getEmbedding(query, userId);
+            embedding = await this.resourceProcessingService.getEmbedding(query, userId, collectionName);
           }
-        } catch (embedError: any) {
-          console.error(`Error getting embedding or expanding query:`, embedError);
-          // Fallback: use query as-is and let searchImages handle embedding
+        } catch {
           expandedQueryResult = query;
-          embedding = undefined!; // Will trigger normal query path in searchImages
+          embedding = undefined!;
         }
 
         expandedQuery = expandedQueryResult;
 
-        // Use pre-computed embedding for search (if available)
         results = await this.resourceProcessingService.searchImages({
           query: expandedQuery,
           userId,
-          embedding: embedding && embedding.length > 0 ? embedding : undefined, // Only pass if valid
-          collectionName, // Use provided collection name
+          embedding: embedding && embedding.length > 0 ? embedding : undefined,
+          collectionName,
         });
 
         const response = {
@@ -334,7 +320,6 @@ class ResourceProcessingController {
     // Check cache
     const cached = await redisService.get<any>(cacheKey);
     if (cached) {
-      console.log(`Cache hit for image search: ${cacheKey}`);
       return cached;
     }
 
@@ -342,17 +327,14 @@ class ResourceProcessingController {
     const searchPromise = (async () => {
       try {
         // Skip expansion for short/specific queries
-        // For "Drone footage" (13 chars, 2 words): shouldExpand = false
-        const shouldExpand =
-          query.length > 10 && query.split(" ").length > 2;
-
-        console.log(`[search-controller] Query analysis - length: ${query.length}, words: ${query.split(" ").length}, shouldExpand: ${shouldExpand}`);
+        const shouldExpand = query.length > 10 && query.split(" ").length > 2;
 
         let embedding: number[];
         let expandedQueryResult: string;
 
         try {
-          // Always get embedding, optionally expand query
+          // Use first collection for embedding (embedding itself doesn't depend on namespace)
+          const firstCollection = collections[0];
           if (shouldExpand) {
             [expandedQueryResult, embedding] = await Promise.all([
               this.resourceProcessingService.expandQuery(
@@ -360,34 +342,26 @@ class ResourceProcessingController {
                 userId,
                 endpoint
               ),
-              this.resourceProcessingService.getEmbedding(query, userId),
+              this.resourceProcessingService.getEmbedding(query, userId, firstCollection),
             ]);
           } else {
             expandedQueryResult = query;
-            embedding = await this.resourceProcessingService.getEmbedding(query, userId);
+            embedding = await this.resourceProcessingService.getEmbedding(query, userId, firstCollection);
           }
-        } catch (embedError: any) {
-          console.error(`[search-controller] Error getting embedding:`, embedError);
-          // Fallback: use query as-is
+        } catch {
           expandedQueryResult = query;
           embedding = undefined!;
         }
 
         expandedQuery = expandedQueryResult;
 
-        console.log(`[search-controller] Query: "${query}", Expanded: "${expandedQuery}", Collections: [${collections.join(", ")}], Embedding length: ${embedding?.length || 0}`);
-
-        // Use pre-computed embedding for parallel collection searches
-        results =
-          await this.resourceProcessingService.searchMultipleCollections({
-            query: expandedQuery,
-            userId,
-            collections,
-            topK,
-            embedding, // Pass pre-computed embedding
-          });
-
-        console.log(`[search-controller] Search completed, found ${results?.length || 0} results`);
+        results = await this.resourceProcessingService.searchMultipleCollections({
+          query: expandedQuery,
+          userId,
+          collections,
+          topK,
+          embedding,
+        });
 
         const response = {
           results,
@@ -572,7 +546,6 @@ class ResourceProcessingController {
       );
       return result;
     } catch (error: any) {
-      console.error("Error processing video:", error);
       throw new Error(`Failed to process video: ${error.message}`);
     }
   }
@@ -639,31 +612,27 @@ class ResourceProcessingController {
     // Check cache
     const cached = await redisService.get<any>(cacheKey);
     if (cached) {
-      console.log(`Cache hit for video search: ${cacheKey}`);
       return cached;
     }
 
     // Create search promise
     const searchPromise = (async () => {
       try {
-        // Skip expansion for short/specific queries
-        const shouldExpand =
-          query.length > 10 && query.split(" ").length > 2;
+        const shouldExpand = query.length > 10 && query.split(" ").length > 2;
 
         let embedding: number[];
         let expandedQueryResult: string;
 
         try {
-          // Get embedding for video search - use videoProcessingService's method or create VectorDB
           const { VectorDBService } = await import("../services/vectordb.service");
           const { createCollectionNamespace } = await import("../utils/namespace");
           
-          // Use Default collection namespace for video embedding
-          const defaultNamespace = createCollectionNamespace(userId, "Default", "video");
-          const videoVectorDB = new VectorDBService(defaultNamespace, userId);
+          // Use first collection from the passed collections array
+          const firstCollection = collections[0];
+          const namespace = createCollectionNamespace(userId, firstCollection, "video");
+          const videoVectorDB = new VectorDBService(namespace, userId);
           embedding = await videoVectorDB.getEmbedding(query);
 
-          // Run expansion in parallel if needed
           if (shouldExpand) {
             expandedQueryResult = await this.resourceProcessingService.expandQuery(
               `User Query: "${query}"\nExpanded:`,
@@ -673,56 +642,40 @@ class ResourceProcessingController {
           } else {
             expandedQueryResult = query;
           }
-        } catch (embedError: any) {
-          console.error(`Error getting embedding or expanding query for videos:`, embedError);
-          // Fallback: use query as-is and let search handle embedding
+        } catch {
           expandedQueryResult = query;
-          embedding = undefined!; // Will trigger normal query path
+          embedding = undefined!;
         }
 
         expandedQuery = expandedQueryResult;
 
-        console.log(`[video-search-controller] Searching ${collections.length} collections: ${collections.join(", ")}`);
+        const groupedResults = await this.videoProcessingService.searchVideosMultipleCollections(
+          expandedQuery,
+          userId,
+          collections,
+          topK,
+          embedding && embedding.length > 0 ? embedding : undefined
+        );
 
-        // Use pre-computed embedding for parallel collection searches
-        const groupedResults =
-          await this.videoProcessingService.searchVideosMultipleCollections(
-            expandedQuery,
-            userId,
-            collections,
-            topK,
-            embedding && embedding.length > 0 ? embedding : undefined // Only pass if valid
-          );
+        const enrichedResults: Record<string, any> = {};
 
-      // Enrich results with video metadata from database
-      // groupedResults is now an object with videoUrl as keys
-      const enrichedResults: Record<string, any> = {};
-
-      for (const [videoUrl, videoResult] of Object.entries(groupedResults)) {
-        try {
-          // Fetch video metadata from database
-          const videoMetadata =
-            await this.supabaseService.getVideoMetadataByUrl(userId, videoUrl);
-
-          enrichedResults[videoUrl] = {
-            ...videoResult,
-            videoId: videoMetadata?.id,
-            title: this.extractVideoTitle(videoUrl),
-            duration: videoMetadata?.duration,
-            resolution: videoMetadata?.resolution,
-          };
-        } catch (error) {
-          console.error(
-            `Error fetching metadata for video ${videoUrl}:`,
-            error
-          );
-          // Return result without metadata if fetch fails
-          enrichedResults[videoUrl] = {
-            ...videoResult,
-            title: this.extractVideoTitle(videoUrl),
-          };
+        for (const [videoUrl, videoResult] of Object.entries(groupedResults)) {
+          try {
+            const videoMetadata = await this.supabaseService.getVideoMetadataByUrl(userId, videoUrl);
+            enrichedResults[videoUrl] = {
+              ...videoResult,
+              videoId: videoMetadata?.id,
+              title: this.extractVideoTitle(videoUrl),
+              duration: videoMetadata?.duration,
+              resolution: videoMetadata?.resolution,
+            };
+          } catch {
+            enrichedResults[videoUrl] = {
+              ...videoResult,
+              title: this.extractVideoTitle(videoUrl),
+            };
+          }
         }
-      }
 
         const response = {
           results: enrichedResults,

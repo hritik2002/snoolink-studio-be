@@ -39,7 +39,6 @@ router.get("/resources", async (req, res) => {
     
     res.json({ success: true, data: results });
   } catch (error: any) {
-    console.error("Error fetching paginated resources:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -74,22 +73,18 @@ router.get("/search-images", async (req, res) => {
   const collectionName = (collection as string) || "Default";
   
   try {
-    console.log(`[search-images] Starting search for query: "${query}", collection: "${collectionName}", userId: ${req.user!.id}`);
     const results = await resourceProcessingController.searchImages(
       query,
       req.user!.id,
       "/api/media/search-images",
       req.method,
-      collectionName // Pass collection name
+      collectionName
     );
-    console.log(`[search-images] Search completed, found ${results?.results?.length || 0} results`);
     res.json({ success: true, data: results });
   } catch (error: any) {
-    console.error(`[search-images] Error:`, error);
     res.status(500).json({ 
       success: false, 
-      error: error?.message || "Internal server error",
-      details: process.env.NODE_ENV === "development" ? error?.stack : undefined
+      error: error?.message || "Internal server error"
     });
   }
 });
@@ -154,7 +149,6 @@ router.get("/search", async (req, res) => {
       }
     }
 
-    console.log(`[search] Starting image search - query: "${query}", collections: [${collectionNames.join(", ")}], userId: ${userId}, topK: ${topK || 10}`);
     const results = await resourceProcessingController.searchMultipleCollections(
       query,
       userId,
@@ -163,15 +157,11 @@ router.get("/search", async (req, res) => {
       "/api/media/search",
       req.method
     );
-    console.log(`[search] Image search completed - found ${results?.results?.length || 0} results across ${collectionNames.length} collection(s)`);
     res.json({ success: true, data: results });
   } catch (error: any) {
-    console.error("[search] Error in multi-collection search:", error);
-    console.error("[search] Error stack:", error?.stack);
     res.status(500).json({ 
       success: false, 
-      error: error?.message || "Internal server error",
-      details: process.env.NODE_ENV === "development" ? error?.stack : undefined
+      error: error?.message || "Internal server error"
     });
   }
 });
@@ -435,7 +425,6 @@ router.get("/search-videos-collections", async (req, res) => {
       }
     }
 
-    console.log(`[search-videos] Starting video search - query: "${query}", collections: [${collectionNames.join(", ")}], userId: ${userId}, topK: ${topK || 10}`);
     const results = await resourceProcessingController.searchVideosMultipleCollections(
       query,
       userId,
@@ -444,11 +433,8 @@ router.get("/search-videos-collections", async (req, res) => {
       "/api/media/search-videos-collections",
       req.method
     );
-    const resultCount = Object.keys(results?.results || {}).length;
-    console.log(`[search-videos] Video search completed - found ${resultCount} video(s) with clips across ${collectionNames.length} collection(s)`);
     res.json({ success: true, data: results });
   } catch (error: any) {
-    console.error("Error in multi-collection video search:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -503,24 +489,22 @@ router.get("/download-video-segment", async (req, res) => {
     fileStream.on("end", () => {
       try {
         fs.unlinkSync(segmentPath);
-      } catch (error) {
-        console.error("Error deleting segment file:", error);
+      } catch {
+        // Ignore cleanup errors
       }
     });
 
-    fileStream.on("error", (error: any) => {
-      console.error("Error streaming segment file:", error);
+    fileStream.on("error", () => {
       try {
         fs.unlinkSync(segmentPath);
-      } catch (err) {
-        console.error("Error deleting segment file:", err);
+      } catch {
+        // Ignore cleanup errors
       }
       if (!res.headersSent) {
         res.status(500).json({ success: false, error: "Failed to stream video segment" });
       }
     });
   } catch (error: any) {
-    console.error("Error downloading video segment:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

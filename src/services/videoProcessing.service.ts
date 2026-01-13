@@ -39,7 +39,6 @@ export class VideoProcessingService {
    * Download video from URL to temporary file
    */
   private async downloadVideo(videoUrl: string): Promise<string> {
-    console.log("Downloading video from URL:", videoUrl);
     const videoPath = path.join(this.tempDir, `video_${uuidv4()}.mp4`);
 
     const response = await axios({
@@ -52,10 +51,7 @@ export class VideoProcessingService {
     response.data.pipe(writer);
 
     return new Promise((resolve, reject) => {
-      writer.on("finish", () => {
-        console.log("Video downloaded to:", videoPath);
-        resolve(videoPath);
-      });
+      writer.on("finish", () => resolve(videoPath));
       writer.on("error", reject);
     });
   }
@@ -439,11 +435,11 @@ Style:
       await this.deleteFrameFromCloudinary(publicId);
 
       // Delete local frame file
-      try {
-        fs.unlinkSync(framePath);
-      } catch (error) {
-        console.error(`Error deleting local frame ${framePath}:`, error);
-      }
+        try {
+          fs.unlinkSync(framePath);
+        } catch {
+          // Ignore cleanup errors
+        }
     }
 
     // Clean up frames directory
@@ -475,8 +471,8 @@ Style:
     // Clean up chunk file
     try {
       fs.unlinkSync(chunkPath);
-    } catch (error) {
-      console.error(`Error deleting chunk file:`, error);
+    } catch {
+      // Ignore cleanup errors
     }
 
     return { chunkId, summary, start, end };
@@ -601,7 +597,7 @@ Style:
     userId: string,
     collections: string[],
     topK: number = 5,
-    embedding?: number[] // Optional pre-computed embedding
+    embedding?: number[]
   ): Promise<Record<string, {
     videoUrl: string;
     videoId?: number;
@@ -615,68 +611,47 @@ Style:
       startTime: string;
       endTime: string;
     }>;
-    bestScore: number; // Highest score among all clips for sorting
+    bestScore: number;
   }>> {
     if (collections.length === 0) {
       return {};
     }
 
-    // Pre-compute embedding once if not provided
+    // Pre-compute embedding once if not provided, using first collection
     let queryEmbedding = embedding;
     if (!queryEmbedding) {
-      const defaultNamespace = createCollectionNamespace(userId, collections[0], "video");
-      const defaultVectorDB = new VectorDBService(defaultNamespace, userId);
-      queryEmbedding = await defaultVectorDB.getEmbedding(query);
+      const namespace = createCollectionNamespace(userId, collections[0], "video");
+      const vectorDB = new VectorDBService(namespace, userId);
+      queryEmbedding = await vectorDB.getEmbedding(query);
     }
 
-    // Create search promises for each collection using pre-computed embedding
+    // Track if we've tried legacy namespace
+    let legacySearched = false;
+
+    // Create search promises for each collection
     const searchPromises = collections.map(async (collectionName) => {
       try {
-        // Use collection-based namespace for videos
         const namespace = createCollectionNamespace(userId, collectionName, "video");
-        console.log(`[video-search] Searching collection "${collectionName}" in namespace: ${namespace}`);
         const vectorDB = new VectorDBService(namespace, userId);
         
-        // Use pre-computed embedding for parallel searches (use same minScore as image search: 0.5)
         const results = queryEmbedding
           ? await vectorDB.queryWithEmbedding(queryEmbedding, topK * 3, 0.5)
           : await vectorDB.query(query, topK * 3, 0.5);
 
-        // If searching "Default" and no results, also try legacy namespace for backward compatibility
-        if (collectionName === "Default" && results.matches.length === 0) {
-          console.log(`[video-search] No results in collection namespace for Default, trying legacy namespace...`);
-          try {
-            const legacyNamespace = createUserNamespace(userId, "video"); // Legacy: user-{userId}-videos
-            console.log(`[video-search] Searching legacy namespace: ${legacyNamespace}`);
-            const legacyVectorDB = new VectorDBService(legacyNamespace, userId);
-            const legacyResults = queryEmbedding
-              ? await legacyVectorDB.queryWithEmbedding(queryEmbedding, topK * 3, 0.5)
-              : await legacyVectorDB.query(query, topK * 3, 0.5);
-            return legacyResults.matches.map((m) => ({
-              id: m.id || "",
-              score: m.score || 0,
-              text: (m.metadata?.text as string) || "",
-              videoUrl: m.metadata?.videoUrl as string | undefined,
-              startTime: m.metadata?.startTime as string | undefined,
-              endTime: m.metadata?.endTime as string | undefined,
-              collectionName,
-            }));
-          } catch (legacyError) {
-            console.error(`Error searching legacy video namespace:`, legacyError);
-          }
+        if (results.matches.length > 0) {
+          return results.matches.map((m) => ({
+            id: m.id || "",
+            score: m.score || 0,
+            text: (m.metadata?.text as string) || "",
+            videoUrl: m.metadata?.videoUrl as string | undefined,
+            startTime: m.metadata?.startTime as string | undefined,
+            endTime: m.metadata?.endTime as string | undefined,
+            collectionName,
+          }));
         }
 
-        return results.matches.map((m) => ({
-          id: m.id || "",
-          score: m.score || 0,
-          text: (m.metadata?.text as string) || "",
-          videoUrl: m.metadata?.videoUrl as string | undefined,
-          startTime: m.metadata?.startTime as string | undefined,
-          endTime: m.metadata?.endTime as string | undefined,
-          collectionName,
-        }));
-      } catch (error) {
-        console.error(`Error searching videos in collection ${collectionName}:`, error);
+        return [];
+      } catch {
         return [];
       }
     });
@@ -684,8 +659,33 @@ Style:
     // Execute all searches in parallel
     const allResults = await Promise.all(searchPromises);
 
-    // Flatten and merge results
-    const mergedResults = allResults.flat();
+    // Flatten results
+    let mergedResults = allResults.flat();
+
+    // If no results from collection namespaces, try legacy namespace once
+    if (mergedResults.length === 0 && !legacySearched) {
+      legacySearched = true;
+      try {
+        const legacyNamespace = createUserNamespace(userId, "video");
+        const legacyVectorDB = new VectorDBService(legacyNamespace, userId);
+        const legacyQueryResults = queryEmbedding
+          ? await legacyVectorDB.queryWithEmbedding(queryEmbedding, topK * 3, 0.5)
+          : await legacyVectorDB.query(query, topK * 3, 0.5);
+        
+        mergedResults = legacyQueryResults.matches.map((m) => ({
+          id: m.id || "",
+          score: m.score || 0,
+          text: (m.metadata?.text as string) || "",
+          videoUrl: m.metadata?.videoUrl as string | undefined,
+          startTime: m.metadata?.startTime as string | undefined,
+          endTime: m.metadata?.endTime as string | undefined,
+          collectionName: collections[0],
+        }));
+      } catch {
+        // Legacy search failed
+      }
+    }
+
 
     // Group ALL clips by videoUrl - every clip with the same videoUrl goes into the same group
     const groupedByVideo = new Map<string, {
@@ -706,7 +706,6 @@ Style:
     for (const result of mergedResults) {
       // Skip results without videoUrl (they can't be grouped)
       if (!result.videoUrl) {
-        console.warn(`Skipping result without videoUrl: ${result.id}`);
         continue;
       }
 
@@ -752,8 +751,6 @@ Style:
             existingClip.id = result.id; // Update ID if available
           }
         }
-      } else {
-        console.warn(`Skipping clip without valid timestamps for videoUrl ${videoKey}: ${result.id}`);
       }
 
       // Update best score for this video group
