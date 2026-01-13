@@ -209,9 +209,12 @@ class ResourceProcessingController {
 
         expandedQuery = expandedQueryResult;
 
+        // Use pre-computed embedding for search
         results = await this.resourceProcessingService.searchImages({
           query: expandedQuery,
           userId,
+          embedding, // Pass pre-computed embedding
+          collectionName: "Default",
         });
 
         const response = {

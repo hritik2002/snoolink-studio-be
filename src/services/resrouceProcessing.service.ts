@@ -63,24 +63,59 @@ export class ResourceProcessingService {
     return id ?? "";
   }
 
-  // Legacy single-namespace search
+  // Legacy single-namespace search (now uses collection namespace)
   async searchImages({
     query,
     userId,
     topK = 5,
+    embedding, // Optional pre-computed embedding
+    collectionName = "Default",
   }: {
     query: string;
     userId: string;
     topK?: number;
+    embedding?: number[]; // Optional pre-computed embedding
+    collectionName?: string;
   }) {
-    const db = this.getVectorDB(userId);
-    const results = await db.query(query, topK).then((res) =>
-      res.matches.map((m) => ({
-        id: m.id,
-        score: m.score,
-        imageUrl: m.metadata?.imageUrl ?? "",
-      }))
-    );
+    // Use collection-based namespace (not legacy)
+    const db = this.getCollectionVectorDB(userId, collectionName);
+    
+    // Use pre-computed embedding if provided, otherwise query normally
+    const results = embedding
+      ? await db.queryWithEmbedding(embedding, topK).then((res) =>
+          res.matches.map((m) => ({
+            id: m.id,
+            score: m.score,
+            imageUrl: m.metadata?.imageUrl ?? "",
+          }))
+        )
+      : await db.query(query, topK).then((res) =>
+          res.matches.map((m) => ({
+            id: m.id,
+            score: m.score,
+            imageUrl: m.metadata?.imageUrl ?? "",
+          }))
+        );
+
+    // If no results in collection namespace and searching "Default", try legacy namespace
+    if (results.length === 0 && collectionName === "Default") {
+      console.log(`No results in collection namespace for Default, trying legacy namespace...`);
+      try {
+        const legacyDb = this.getVectorDB(userId); // Legacy namespace: user-{userId}-images
+        const legacyResults = embedding
+          ? await legacyDb.queryWithEmbedding(embedding, topK)
+          : await legacyDb.query(query, topK);
+        
+        return legacyResults.matches.map((m) => ({
+          id: m.id,
+          score: m.score ?? 0,
+          imageUrl: (m.metadata?.imageUrl as string) ?? "",
+        }));
+      } catch (legacyError) {
+        console.error(`Error searching legacy namespace:`, legacyError);
+      }
+    }
+
     return results;
   }
 
