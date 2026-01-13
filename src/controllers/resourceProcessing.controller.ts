@@ -14,6 +14,9 @@ class ResourceProcessingController {
   private uploadsService: UploadsService;
   private supabaseService: SupabaseService;
   private videoProcessingService: VideoProcessingService;
+  // Request deduplication: track pending requests to avoid duplicate work
+  private pendingRequests = new Map<string, Promise<any>>();
+
   constructor() {
     this.resourceProcessingService = new ResourceProcessingService();
     this.uploadsService = new UploadsService();
@@ -164,75 +167,107 @@ class ResourceProcessingController {
     let results: any = null;
     let error: string | null = null;
 
-    try {
-      expandedQuery = await this.resourceProcessingService.expandQuery(
-        `User Query: "${query}"
-        Expanded:`,
-        userId,
-        endpoint
-      );
+    // Check cache FIRST with original query (before expansion)
+    const cacheKey = this.getSearchCacheKey(
+      userId,
+      query, // Use original query for cache key
+      ["Default"],
+      5,
+      "image"
+    );
 
-      // Check cache first
-      const cacheKey = this.getSearchCacheKey(
-        userId,
-        expandedQuery,
-        ["Default"],
-        5,
-        "image"
-      );
-      const cached = await redisService.get<any>(cacheKey);
-      if (cached) {
-        console.log(`Cache hit for image search: ${cacheKey}`);
-        return cached;
-      }
-
-      results = await this.resourceProcessingService.searchImages({
-        query: expandedQuery,
-        userId,
-      });
-
-      const response = {
-        results,
-        expandedQuery,
-        collectionsSearched: ["Default"],
-      };
-
-      // Cache the results (15 minutes TTL for search results)
-      await redisService.set(cacheKey, response, 900);
-
-      const responseTime = Date.now() - startTime;
-
-      // Log the request asynchronously (fire-and-forget)
-      loggingService.logRequest({
-        user_id: userId,
-        user_query: query,
-        enhanced_query: expandedQuery,
-        response: response,
-        error: null,
-        endpoint,
-        method,
-        response_time_ms: responseTime,
-      });
-
-      return response;
-    } catch (err: any) {
-      error = err?.message || "Unknown error occurred";
-      const responseTime = Date.now() - startTime;
-
-      // Log the error asynchronously (fire-and-forget)
-      loggingService.logRequest({
-        user_id: userId,
-        user_query: query,
-        enhanced_query: expandedQuery,
-        response: null,
-        error: error,
-        endpoint,
-        method,
-        response_time_ms: responseTime,
-      });
-
-      throw err;
+    // Check for pending request (deduplication)
+    if (this.pendingRequests.has(cacheKey)) {
+      return this.pendingRequests.get(cacheKey)!;
     }
+
+    // Check cache
+    const cached = await redisService.get<any>(cacheKey);
+    if (cached) {
+      console.log(`Cache hit for image search: ${cacheKey}`);
+      return cached;
+    }
+
+    // Create search promise
+    const searchPromise = (async () => {
+      try {
+        // Skip expansion for short/specific queries
+        const shouldExpand =
+          query.length > 10 && query.split(" ").length > 2;
+
+        // Run expansion and embedding in parallel if needed
+        const [expandedQueryResult, embedding] = shouldExpand
+          ? await Promise.all([
+              this.resourceProcessingService.expandQuery(
+                `User Query: "${query}"\nExpanded:`,
+                userId,
+                endpoint
+              ),
+              this.resourceProcessingService.getEmbedding(query, userId),
+            ])
+          : [query, await this.resourceProcessingService.getEmbedding(query, userId)];
+
+        expandedQuery = expandedQueryResult;
+
+        results = await this.resourceProcessingService.searchImages({
+          query: expandedQuery,
+          userId,
+        });
+
+        const response = {
+          results,
+          expandedQuery,
+          collectionsSearched: ["Default"],
+        };
+
+        // Cache the results (15 minutes TTL for search results)
+        await redisService.set(cacheKey, response, 900);
+
+        const responseTime = Date.now() - startTime;
+
+        // Log asynchronously (don't await)
+        setImmediate(() => {
+          loggingService.logRequest({
+            user_id: userId,
+            user_query: query,
+            enhanced_query: expandedQuery,
+            response: response,
+            error: null,
+            endpoint,
+            method,
+            response_time_ms: responseTime,
+          });
+        });
+
+        return response;
+      } catch (err: any) {
+        error = err?.message || "Unknown error occurred";
+        const responseTime = Date.now() - startTime;
+
+        // Log error asynchronously
+        setImmediate(() => {
+          loggingService.logRequest({
+            user_id: userId,
+            user_query: query,
+            enhanced_query: expandedQuery,
+            response: null,
+            error: error,
+            endpoint,
+            method,
+            response_time_ms: responseTime,
+          });
+        });
+
+        throw err;
+      } finally {
+        // Remove from pending requests
+        this.pendingRequests.delete(cacheKey);
+      }
+    })();
+
+    // Store pending request
+    this.pendingRequests.set(cacheKey, searchPromise);
+    return searchPromise;
   }
 
   /**
@@ -250,82 +285,126 @@ class ResourceProcessingController {
     endpoint: string = "/api/media/search",
     method: string = "GET"
   ) {
+    // Early return for empty collections
+    if (collections.length === 0) {
+      return {
+        results: [],
+        expandedQuery: null,
+        collectionsSearched: [],
+      };
+    }
+
     const startTime = Date.now();
     let expandedQuery: string | null = null;
     let results: any = null;
     let error: string | null = null;
 
-    try {
-      expandedQuery = await this.resourceProcessingService.expandQuery(
-        `User Query: "${query}"
-        Expanded:`,
-        userId,
-        endpoint
-      );
+    // Check cache FIRST with original query (before expansion)
+    const cacheKey = this.getSearchCacheKey(
+      userId,
+      query, // Use original query for cache key
+      collections,
+      topK,
+      "image"
+    );
 
-      // Check cache first
-      const cacheKey = this.getSearchCacheKey(
-        userId,
-        query,
-        collections,
-        topK,
-        "image"
-      );
-      const cached = await redisService.get<any>(cacheKey);
-      if (cached) {
-        console.log(`Cache hit for image search: ${cacheKey}`);
-        return cached;
-      }
-
-      results = await this.resourceProcessingService.searchMultipleCollections({
-        query: expandedQuery,
-        userId,
-        collections,
-        topK,
-      });
-
-      const response = {
-        results,
-        expandedQuery,
-        collectionsSearched: collections,
-      };
-
-      // Cache the results (15 minutes TTL for search results)
-      await redisService.set(cacheKey, response, 900);
-
-      const responseTime = Date.now() - startTime;
-
-      // Log the request asynchronously (fire-and-forget)
-      loggingService.logRequest({
-        user_id: userId,
-        user_query: query,
-        enhanced_query: expandedQuery,
-        response: response,
-        error: null,
-        endpoint,
-        method,
-        response_time_ms: responseTime,
-      });
-
-      return response;
-    } catch (err: any) {
-      error = err?.message || "Unknown error occurred";
-      const responseTime = Date.now() - startTime;
-
-      // Log the error asynchronously (fire-and-forget)
-      loggingService.logRequest({
-        user_id: userId,
-        user_query: query,
-        enhanced_query: expandedQuery,
-        response: null,
-        error: error,
-        endpoint,
-        method,
-        response_time_ms: responseTime,
-      });
-
-      throw err;
+    // Check for pending request (deduplication)
+    if (this.pendingRequests.has(cacheKey)) {
+      return this.pendingRequests.get(cacheKey)!;
     }
+
+    // Check cache
+    const cached = await redisService.get<any>(cacheKey);
+    if (cached) {
+      console.log(`Cache hit for image search: ${cacheKey}`);
+      return cached;
+    }
+
+    // Create search promise
+    const searchPromise = (async () => {
+      try {
+        // Skip expansion for short/specific queries
+        const shouldExpand =
+          query.length > 10 && query.split(" ").length > 2;
+
+        // Run expansion and embedding in parallel if needed
+        const [expandedQueryResult, embedding] = shouldExpand
+          ? await Promise.all([
+              this.resourceProcessingService.expandQuery(
+                `User Query: "${query}"\nExpanded:`,
+                userId,
+                endpoint
+              ),
+              this.resourceProcessingService.getEmbedding(query, userId),
+            ])
+          : [query, await this.resourceProcessingService.getEmbedding(query, userId)];
+
+        expandedQuery = expandedQueryResult;
+
+        // Use pre-computed embedding for parallel collection searches
+        results =
+          await this.resourceProcessingService.searchMultipleCollections({
+            query: expandedQuery,
+            userId,
+            collections,
+            topK,
+            embedding, // Pass pre-computed embedding
+          });
+
+        const response = {
+          results,
+          expandedQuery,
+          collectionsSearched: collections,
+        };
+
+        // Cache the results (15 minutes TTL for search results)
+        await redisService.set(cacheKey, response, 900);
+
+        const responseTime = Date.now() - startTime;
+
+        // Log asynchronously (don't await)
+        setImmediate(() => {
+          loggingService.logRequest({
+            user_id: userId,
+            user_query: query,
+            enhanced_query: expandedQuery,
+            response: response,
+            error: null,
+            endpoint,
+            method,
+            response_time_ms: responseTime,
+          });
+        });
+
+        return response;
+      } catch (err: any) {
+        error = err?.message || "Unknown error occurred";
+        const responseTime = Date.now() - startTime;
+
+        // Log error asynchronously
+        setImmediate(() => {
+          loggingService.logRequest({
+            user_id: userId,
+            user_query: query,
+            enhanced_query: expandedQuery,
+            response: null,
+            error: error,
+            endpoint,
+            method,
+            response_time_ms: responseTime,
+          });
+        });
+
+        throw err;
+      } finally {
+        // Remove from pending requests
+        this.pendingRequests.delete(cacheKey);
+      }
+    })();
+
+    // Store pending request
+    this.pendingRequests.set(cacheKey, searchPromise);
+    return searchPromise;
   }
 
   async queueImages(

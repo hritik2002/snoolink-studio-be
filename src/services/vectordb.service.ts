@@ -3,6 +3,8 @@ import OpenAI from "openai";
 import { CONFIG } from "../config";
 import { v4 as uuidv4 } from "uuid";
 import { CostTrackingService } from "./costTracking.service";
+import { redisService } from "./redis.service";
+import crypto from "crypto";
 
 export class VectorDBService {
   private db: Pinecone;
@@ -17,10 +19,23 @@ export class VectorDBService {
     this.db = new Pinecone({
       apiKey: CONFIG.pinecone.apiKey,
     });
+    // Optimize OpenAI client with timeouts and retry limits
     this.openaiClient = new OpenAI({
       apiKey: CONFIG.openai.apiKey,
+      timeout: 30000, // 30s timeout
+      maxRetries: 2, // Reduce retries for faster failures
     });
     this.costTracker = new CostTrackingService();
+  }
+
+  /**
+   * Hash text for cache key generation
+   */
+  private hashText(text: string): string {
+    return crypto
+      .createHash("md5")
+      .update(text.toLowerCase().trim())
+      .digest("hex");
   }
 
   async upsert(
@@ -44,13 +59,30 @@ export class VectorDBService {
   }
 
   async embed(text: string, operation: "upsert" | "query" = "query") {
+    // Cache embeddings for queries (not upserts) to avoid re-computing
+    if (operation === "query") {
+      const cacheKey = `embedding:${this.hashText(text)}`;
+      const cached = await redisService.get<number[]>(cacheKey);
+      if (cached) {
+        return cached;
+      }
+    }
+
     if (!this.userId) {
       // If no userId provided, skip cost tracking but still perform embedding
       const embedding = await this.openaiClient.embeddings.create({
         model: "text-embedding-ada-002",
         input: text,
       });
-      return embedding.data[0].embedding;
+      const result = embedding.data[0].embedding;
+      
+      // Cache query embeddings for 24 hours
+      if (operation === "query") {
+        const cacheKey = `embedding:${this.hashText(text)}`;
+        await redisService.set(cacheKey, result, 86400); // 24 hours
+      }
+      
+      return result;
     }
 
     const startTime = Date.now();
@@ -66,6 +98,13 @@ export class VectorDBService {
 
       requestId = response._request_id ?? undefined;
       const responseTime = Date.now() - startTime;
+      const embedding = response.data[0].embedding;
+
+      // Cache query embeddings for 24 hours
+      if (operation === "query") {
+        const cacheKey = `embedding:${this.hashText(text)}`;
+        await redisService.set(cacheKey, embedding, 86400); // 24 hours
+      }
 
       // Track cost
       await this.costTracker.trackEmbedding(
@@ -90,7 +129,7 @@ export class VectorDBService {
         response.usage
       );
 
-      return response.data[0].embedding;
+      return embedding;
     } catch (error) {
       success = false;
       errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -124,8 +163,80 @@ export class VectorDBService {
     }
   }
 
+  /**
+   * Get embedding for a query (with caching)
+   * Useful for parallel operations where we need the embedding separately
+   */
+  async getEmbedding(text: string): Promise<number[]> {
+    return this.embed(text, "query");
+  }
+
+  /**
+   * Query with timeout protection
+   */
   async query(text: string, topK: number = 5, minScore: number = 0.7) {
+    return Promise.race([
+      this.performQuery(text, topK, minScore),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Query timeout after 5s")), 5000)
+      ),
+    ]);
+  }
+
+  /**
+   * Perform the actual query operation
+   */
+  private async performQuery(
+    text: string,
+    topK: number,
+    minScore: number
+  ) {
     const embedding = await this.embed(text, "query");
+    const result = await this.db
+      .index(CONFIG.pinecone.index)
+      .namespace(this.namespace)
+      .query({
+        vector: embedding,
+        topK: topK * 2, // Fetch more to filter
+        includeMetadata: true,
+      });
+
+    // Filter results by minimum score
+    const filteredMatches = result.matches.filter(
+      (m) => (m.score || 0) >= minScore
+    );
+
+    return {
+      ...result,
+      matches: filteredMatches.slice(0, topK), // Return top K after filtering
+    };
+  }
+
+  /**
+   * Query using a pre-computed embedding (for parallel operations)
+   * This avoids re-embedding when we already have the embedding
+   */
+  async queryWithEmbedding(
+    embedding: number[],
+    topK: number = 5,
+    minScore: number = 0.7
+  ) {
+    return Promise.race([
+      this.performQueryWithEmbedding(embedding, topK, minScore),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Query timeout after 5s")), 5000)
+      ),
+    ]);
+  }
+
+  /**
+   * Perform query with pre-computed embedding
+   */
+  private async performQueryWithEmbedding(
+    embedding: number[],
+    topK: number,
+    minScore: number
+  ) {
     const result = await this.db
       .index(CONFIG.pinecone.index)
       .namespace(this.namespace)

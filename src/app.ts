@@ -1,6 +1,7 @@
 import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import cors from "cors";
+import compression from "compression";
 import routes from "./routes/index.ts";
 import logsRoutes from "./routes/logs.routes.ts";
 import mediaRoutes from "./routes/media.routes.ts";
@@ -9,6 +10,27 @@ import costRoutes from "./routes/cost.routes.ts";
 import { FILE_SIZE_LIMIT } from "./utils/constants";
 
 const app = express();
+
+// Add response compression middleware (before other middleware)
+app.use(
+  compression({
+    level: 6, // Balance between speed and compression
+    threshold: 1024, // Only compress responses > 1KB
+    filter: (req: Request, res: Response) => {
+      // Don't compress if client doesn't support it
+      if (req.headers["x-no-compression"]) {
+        return false;
+      }
+      // Compress JSON and text responses
+      const contentType = res.getHeader("content-type") as string;
+      return (
+        !contentType ||
+        contentType.includes("application/json") ||
+        contentType.includes("text/")
+      );
+    },
+  })
+);
 
 // CORS configuration - allow frontend to connect
 app.use(

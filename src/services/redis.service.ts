@@ -15,6 +15,16 @@ class RedisService {
         db: CONFIG.redis.db,
         maxRetriesPerRequest: null,
         retryStrategy: (times: number) => Math.min(times * 50, 2000),
+        // Optimize connection pooling
+        enableReadyCheck: true,
+        lazyConnect: false,
+        connectTimeout: 10000,
+        commandTimeout: 5000,
+        // Use pipeline for batch operations
+        enableOfflineQueue: false,
+        // Connection pool settings
+        keepAlive: 30000,
+        family: 4, // Use IPv4
       };
 
       console.log(redisConfig);

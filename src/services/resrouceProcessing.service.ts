@@ -85,19 +85,30 @@ export class ResourceProcessingService {
   }
 
   /**
+   * Get embedding for a query (for parallel operations)
+   */
+  async getEmbedding(query: string, userId: string): Promise<number[]> {
+    const db = this.getCollectionVectorDB(userId, "Default");
+    return db.getEmbedding(query);
+  }
+
+  /**
    * Search across multiple collections using Promise.all
    * Results are merged and sorted by score
+   * Optimized to use pre-computed embeddings for parallel searches
    */
   async searchMultipleCollections({
     query,
     userId,
     collections,
     topK = 5,
+    embedding, // Optional pre-computed embedding
   }: {
     query: string;
     userId: string;
     collections: string[];
     topK?: number;
+    embedding?: number[]; // Optional pre-computed embedding
   }): Promise<SearchResult[]> {
     if (collections.length === 0) {
       return [];
@@ -105,19 +116,31 @@ export class ResourceProcessingService {
 
     console.log("collections", collections);
 
-    // Create search promises for each collection
+    // Pre-compute embedding once if not provided
+    const queryEmbedding =
+      embedding ||
+      (await this.getCollectionVectorDB(userId, collections[0]).getEmbedding(
+        query
+      ));
+
+    // Create search promises for each collection using pre-computed embedding
     const searchPromises = collections.map(async (collectionName) => {
       try {
         // Use collection-based namespace
         const db = this.getCollectionVectorDB(userId, collectionName);
-        const results = await db.query(query, topK);
-        
+        const results = await db.queryWithEmbedding(queryEmbedding, topK);
+
         // If searching "Default" and no results, also try legacy namespace for backward compatibility
         if (collectionName === "Default" && results.matches.length === 0) {
-          console.log(`No results in new namespace for Default, trying legacy namespace...`);
+          console.log(
+            `No results in new namespace for Default, trying legacy namespace...`
+          );
           try {
             const legacyDb = this.getVectorDB(userId); // Legacy namespace: user-{userId}-images
-            const legacyResults = await legacyDb.query(query, topK);
+            const legacyResults = await legacyDb.queryWithEmbedding(
+              queryEmbedding,
+              topK
+            );
             return legacyResults.matches.map((m) => ({
               id: m.id,
               score: m.score ?? 0,
@@ -128,7 +151,7 @@ export class ResourceProcessingService {
             console.error(`Error searching legacy namespace:`, legacyError);
           }
         }
-        
+
         return results.matches.map((m) => ({
           id: m.id,
           score: m.score ?? 0,
@@ -141,11 +164,13 @@ export class ResourceProcessingService {
       }
     });
 
-    // Execute all searches in parallel
-    const allResults = await Promise.all(searchPromises);
+    // Execute all searches in parallel with Promise.allSettled for resilience
+    const allResults = await Promise.allSettled(searchPromises);
 
-    // Flatten and merge results
-    const mergedResults: SearchResult[] = allResults.flat();
+    // Flatten and merge results, handling both fulfilled and rejected promises
+    const mergedResults: SearchResult[] = allResults
+      .filter((r) => r.status === "fulfilled")
+      .flatMap((r) => (r as PromiseFulfilledResult<SearchResult[]>).value);
 
     // Sort by score descending
     mergedResults.sort((a, b) => b.score - a.score);
