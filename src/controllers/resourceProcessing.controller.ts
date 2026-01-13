@@ -359,6 +359,8 @@ class ResourceProcessingController {
 
         expandedQuery = expandedQueryResult;
 
+        console.log(`[search-controller] Query: "${query}", Expanded: "${expandedQuery}", Collections: [${collections.join(", ")}], Embedding length: ${embedding?.length || 0}`);
+
         // Use pre-computed embedding for parallel collection searches
         results =
           await this.resourceProcessingService.searchMultipleCollections({
@@ -368,6 +370,8 @@ class ResourceProcessingController {
             topK,
             embedding, // Pass pre-computed embedding
           });
+
+        console.log(`[search-controller] Search completed, found ${results?.length || 0} results`);
 
         const response = {
           results,

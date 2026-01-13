@@ -237,6 +237,7 @@ export class VectorDBService {
     topK: number,
     minScore: number
   ) {
+    console.log(`[vectordb] Querying namespace: ${this.namespace}, topK: ${topK}, minScore: ${minScore}`);
     const result = await this.db
       .index(CONFIG.pinecone.index)
       .namespace(this.namespace)
@@ -246,10 +247,18 @@ export class VectorDBService {
         includeMetadata: true,
       });
 
+    console.log(`[vectordb] Raw results from Pinecone: ${result.matches.length} matches`);
+    if (result.matches.length > 0) {
+      const scores = result.matches.map(m => m.score?.toFixed(3)).join(", ");
+      console.log(`[vectordb] Score range: ${scores}`);
+    }
+
     // Filter results by minimum score
     const filteredMatches = result.matches.filter(
       (m) => (m.score || 0) >= minScore
     );
+
+    console.log(`[vectordb] After minScore filter (${minScore}): ${filteredMatches.length} matches`);
 
     return {
       ...result,

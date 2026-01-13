@@ -89,14 +89,18 @@ export class ResourceProcessingService {
       }> = [];
 
       if (embedding) {
-        const queryResult = await db.queryWithEmbedding(embedding, topK);
+        // Use lower minScore (0.5) and fetch more results like video search
+        const queryResult = await db.queryWithEmbedding(embedding, topK * 3, 0.5);
+        console.log(`[image-search] Single collection search: Found ${queryResult.matches.length} results (scores: ${queryResult.matches.map(m => m.score?.toFixed(3)).join(", ") || "none"})`);
         results = queryResult.matches.map((m) => ({
           id: m.id || "",
           score: m.score || 0,
           imageUrl: (m.metadata?.imageUrl as string) ?? "",
         }));
       } else {
-        const queryResult = await db.query(query, topK);
+        // Use lower minScore (0.5) and fetch more results
+        const queryResult = await db.query(query, topK * 3, 0.5);
+        console.log(`[image-search] Single collection search: Found ${queryResult.matches.length} results (scores: ${queryResult.matches.map(m => m.score?.toFixed(3)).join(", ") || "none"})`);
         results = queryResult.matches.map((m) => ({
           id: m.id || "",
           score: m.score || 0,
@@ -111,9 +115,12 @@ export class ResourceProcessingService {
         );
         try {
           const legacyDb = this.getVectorDB(userId); // Legacy namespace: user-{userId}-images
+          const legacyNamespace = createUserNamespace(userId, "image");
+          console.log(`[image-search] Trying legacy namespace: ${legacyNamespace}`);
           const legacyResults = embedding
-            ? await legacyDb.queryWithEmbedding(embedding, topK)
-            : await legacyDb.query(query, topK);
+            ? await legacyDb.queryWithEmbedding(embedding, topK * 3, 0.5)
+            : await legacyDb.query(query, topK * 3, 0.5);
+          console.log(`[image-search] Legacy namespace: Found ${legacyResults.matches.length} results`);
 
           return legacyResults.matches.map((m) => ({
             id: m.id || "",
@@ -179,20 +186,29 @@ export class ResourceProcessingService {
       try {
         // Use collection-based namespace
         const db = this.getCollectionVectorDB(userId, collectionName);
-        console.log(`[image-search] Searching collection "${collectionName}" in namespace: ${createCollectionNamespace(userId, collectionName, "image")}`);
-        const results = await db.queryWithEmbedding(queryEmbedding, topK);
+        const namespace = createCollectionNamespace(userId, collectionName, "image");
+        console.log(`[image-search] Searching collection "${collectionName}" in namespace: ${namespace}`);
+        
+        // Use lower minScore (0.5) and fetch more results (topK * 3) like video search
+        const results = await db.queryWithEmbedding(queryEmbedding, topK * 3, 0.5);
+        
+        console.log(`[image-search] Collection "${collectionName}": Found ${results.matches.length} results (scores: ${results.matches.map(m => m.score?.toFixed(3)).join(", ") || "none"})`);
 
         // If searching "Default" and no results, also try legacy namespace for backward compatibility
         if (collectionName === "Default" && results.matches.length === 0) {
           console.log(
-            `No results in new namespace for Default, trying legacy namespace...`
+            `[image-search] No results in collection namespace for Default, trying legacy namespace...`
           );
           try {
             const legacyDb = this.getVectorDB(userId); // Legacy namespace: user-{userId}-images
+            const legacyNamespace = createUserNamespace(userId, "image");
+            console.log(`[image-search] Searching legacy namespace: ${legacyNamespace}`);
             const legacyResults = await legacyDb.queryWithEmbedding(
               queryEmbedding,
-              topK
+              topK * 3,
+              0.5 // Lower minScore
             );
+            console.log(`[image-search] Legacy namespace: Found ${legacyResults.matches.length} results`);
             return legacyResults.matches.map((m) => ({
               id: m.id,
               score: m.score ?? 0,
@@ -200,7 +216,7 @@ export class ResourceProcessingService {
               collectionName,
             }));
           } catch (legacyError) {
-            console.error(`Error searching legacy namespace:`, legacyError);
+            console.error(`[image-search] Error searching legacy namespace:`, legacyError);
           }
         }
 
@@ -211,7 +227,7 @@ export class ResourceProcessingService {
           collectionName,
         }));
       } catch (error) {
-        console.error(`Error searching collection ${collectionName}:`, error);
+        console.error(`[image-search] Error searching collection ${collectionName}:`, error);
         return []; // Return empty array on error to not fail the entire search
       }
     });
@@ -219,16 +235,33 @@ export class ResourceProcessingService {
     // Execute all searches in parallel with Promise.allSettled for resilience
     const allResults = await Promise.allSettled(searchPromises);
 
+    // Log results from each collection
+    allResults.forEach((result, index) => {
+      if (result.status === "fulfilled") {
+        console.log(`[image-search] Collection "${collections[index]}": ${result.value.length} results`);
+      } else {
+        console.error(`[image-search] Collection "${collections[index]}" failed:`, result.reason);
+      }
+    });
+
     // Flatten and merge results, handling both fulfilled and rejected promises
     const mergedResults: SearchResult[] = allResults
       .filter((r) => r.status === "fulfilled")
       .flatMap((r) => (r as PromiseFulfilledResult<SearchResult[]>).value);
 
+    console.log(`[image-search] Total merged results before sorting: ${mergedResults.length}`);
+
     // Sort by score descending
     mergedResults.sort((a, b) => b.score - a.score);
 
+    const finalResults = mergedResults.slice(0, topK);
+    console.log(`[image-search] Final results after sorting and limiting to ${topK}: ${finalResults.length}`);
+    if (finalResults.length > 0) {
+      console.log(`[image-search] Score range: ${finalResults.map(r => r.score.toFixed(3)).join(", ")}`);
+    }
+
     // Return top K results across all collections
-    return mergedResults.slice(0, topK);
+    return finalResults;
   }
 
   async expandQuery(query: string, userId: string, endpoint?: string): Promise<string> {
