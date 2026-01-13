@@ -584,41 +584,94 @@ class ResourceProcessingController {
     userId: string,
     collections: string[],
     topK: number = 10,
-    endpoint: string = "/api/media/search-videos",
+    endpoint: string = "/api/media/search-videos-collections",
     method: string = "GET"
   ) {
+    // Early return for empty collections
+    if (collections.length === 0) {
+      return {
+        results: {},
+        expandedQuery: null,
+        collectionsSearched: [],
+      };
+    }
+
     const startTime = Date.now();
     let expandedQuery: string | null = null;
     let results: any = null;
     let error: string | null = null;
 
-    try {
-      const cacheKey = this.getSearchCacheKey(
-        userId,
-        query,
-        collections,
-        topK,
-        "video"
-      );
-      const cached = await redisService.get<any>(cacheKey);
-      if (cached) {
-        return cached;
-      }
+    // Check cache FIRST with original query (before expansion)
+    const cacheKey = this.getSearchCacheKey(
+      userId,
+      query, // Use original query for cache key
+      collections,
+      topK,
+      "video"
+    );
 
-      expandedQuery = await this.resourceProcessingService.expandQuery(
-        `User Query: "${query}"
-        Expanded:`,
-        userId,
-        endpoint
-      );
+    // Check for pending request (deduplication)
+    if (this.pendingRequests.has(cacheKey)) {
+      return this.pendingRequests.get(cacheKey)!;
+    }
 
-      const groupedResults =
-        await this.videoProcessingService.searchVideosMultipleCollections(
-          expandedQuery,
-          userId,
-          collections,
-          topK
-        );
+    // Check cache
+    const cached = await redisService.get<any>(cacheKey);
+    if (cached) {
+      console.log(`Cache hit for video search: ${cacheKey}`);
+      return cached;
+    }
+
+    // Create search promise
+    const searchPromise = (async () => {
+      try {
+        // Skip expansion for short/specific queries
+        const shouldExpand =
+          query.length > 10 && query.split(" ").length > 2;
+
+        let embedding: number[];
+        let expandedQueryResult: string;
+
+        try {
+          // Get embedding for video search - use videoProcessingService's method or create VectorDB
+          const { VectorDBService } = await import("../services/vectordb.service");
+          const { createCollectionNamespace } = await import("../utils/namespace");
+          
+          // Use Default collection namespace for video embedding
+          const defaultNamespace = createCollectionNamespace(userId, "Default", "video");
+          const videoVectorDB = new VectorDBService(defaultNamespace, userId);
+          embedding = await videoVectorDB.getEmbedding(query);
+
+          // Run expansion in parallel if needed
+          if (shouldExpand) {
+            expandedQueryResult = await this.resourceProcessingService.expandQuery(
+              `User Query: "${query}"\nExpanded:`,
+              userId,
+              endpoint
+            );
+          } else {
+            expandedQueryResult = query;
+          }
+        } catch (embedError: any) {
+          console.error(`Error getting embedding or expanding query for videos:`, embedError);
+          // Fallback: use query as-is and let search handle embedding
+          expandedQueryResult = query;
+          embedding = undefined!; // Will trigger normal query path
+        }
+
+        expandedQuery = expandedQueryResult;
+
+        console.log(`[video-search-controller] Searching ${collections.length} collections: ${collections.join(", ")}`);
+
+        // Use pre-computed embedding for parallel collection searches
+        const groupedResults =
+          await this.videoProcessingService.searchVideosMultipleCollections(
+            expandedQuery,
+            userId,
+            collections,
+            topK,
+            embedding && embedding.length > 0 ? embedding : undefined // Only pass if valid
+          );
 
       // Enrich results with video metadata from database
       // groupedResults is now an object with videoUrl as keys
@@ -650,48 +703,60 @@ class ResourceProcessingController {
         }
       }
 
-      const response = {
-        results: enrichedResults,
-        expandedQuery,
-        collectionsSearched: collections,
-      };
+        const response = {
+          results: enrichedResults,
+          expandedQuery,
+          collectionsSearched: collections,
+        };
 
-      // Cache the results (15 minutes TTL for search results)
-      await redisService.set(cacheKey, response, 900);
+        // Cache the results (15 minutes TTL for search results)
+        await redisService.set(cacheKey, response, 900);
 
-      const responseTime = Date.now() - startTime;
+        const responseTime = Date.now() - startTime;
 
-      // Log the request asynchronously (fire-and-forget)
-      loggingService.logRequest({
-        user_id: userId,
-        user_query: query,
-        enhanced_query: expandedQuery,
-        response: response,
-        error: null,
-        endpoint,
-        method,
-        response_time_ms: responseTime,
-      });
+        // Log asynchronously (don't await)
+        setImmediate(() => {
+          loggingService.logRequest({
+            user_id: userId,
+            user_query: query,
+            enhanced_query: expandedQuery,
+            response: response,
+            error: null,
+            endpoint,
+            method,
+            response_time_ms: responseTime,
+          });
+        });
 
-      return response;
-    } catch (err: any) {
-      error = err?.message || "Unknown error occurred";
-      const responseTime = Date.now() - startTime;
+        return response;
+      } catch (err: any) {
+        error = err?.message || "Unknown error occurred";
+        const responseTime = Date.now() - startTime;
 
-      // Log the error asynchronously (fire-and-forget)
-      loggingService.logRequest({
-        user_id: userId,
-        user_query: query,
-        enhanced_query: expandedQuery,
-        response: null,
-        error: error,
-        endpoint,
-        method,
-        response_time_ms: responseTime,
-      });
+        // Log error asynchronously
+        setImmediate(() => {
+          loggingService.logRequest({
+            user_id: userId,
+            user_query: query,
+            enhanced_query: expandedQuery,
+            response: null,
+            error: error,
+            endpoint,
+            method,
+            response_time_ms: responseTime,
+          });
+        });
 
-      throw err;
-    }
+        throw err;
+      } finally {
+        // Remove from pending requests
+        this.pendingRequests.delete(cacheKey);
+      }
+    })();
+
+    // Store pending request
+    this.pendingRequests.set(cacheKey, searchPromise);
+    return searchPromise;
   }
 
   /**

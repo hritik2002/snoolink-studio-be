@@ -179,6 +179,7 @@ export class ResourceProcessingService {
       try {
         // Use collection-based namespace
         const db = this.getCollectionVectorDB(userId, collectionName);
+        console.log(`[image-search] Searching collection "${collectionName}" in namespace: ${createCollectionNamespace(userId, collectionName, "image")}`);
         const results = await db.queryWithEmbedding(queryEmbedding, topK);
 
         // If searching "Default" and no results, also try legacy namespace for backward compatibility

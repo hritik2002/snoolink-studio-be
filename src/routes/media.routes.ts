@@ -149,7 +149,7 @@ router.get("/search", async (req, res) => {
       }
     }
 
-    console.log(`[search] Starting search for query: "${query}", collections: ${collectionNames.join(", ")}, userId: ${userId}`);
+    console.log(`[search] Starting image search - query: "${query}", collections: [${collectionNames.join(", ")}], userId: ${userId}, topK: ${topK || 10}`);
     const results = await resourceProcessingController.searchMultipleCollections(
       query,
       userId,
@@ -158,7 +158,7 @@ router.get("/search", async (req, res) => {
       "/api/media/search",
       req.method
     );
-    console.log(`[search] Search completed, found ${results?.results?.length || 0} results`);
+    console.log(`[search] Image search completed - found ${results?.results?.length || 0} results across ${collectionNames.length} collection(s)`);
     res.json({ success: true, data: results });
   } catch (error: any) {
     console.error("[search] Error in multi-collection search:", error);
@@ -430,6 +430,7 @@ router.get("/search-videos-collections", async (req, res) => {
       }
     }
 
+    console.log(`[search-videos] Starting video search - query: "${query}", collections: [${collectionNames.join(", ")}], userId: ${userId}, topK: ${topK || 10}`);
     const results = await resourceProcessingController.searchVideosMultipleCollections(
       query,
       userId,
@@ -438,7 +439,8 @@ router.get("/search-videos-collections", async (req, res) => {
       "/api/media/search-videos-collections",
       req.method
     );
-
+    const resultCount = Object.keys(results?.results || {}).length;
+    console.log(`[search-videos] Video search completed - found ${resultCount} video(s) with clips across ${collectionNames.length} collection(s)`);
     res.json({ success: true, data: results });
   } catch (error: any) {
     console.error("Error in multi-collection video search:", error);

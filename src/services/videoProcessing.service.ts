@@ -600,7 +600,8 @@ Style:
     query: string,
     userId: string,
     collections: string[],
-    topK: number = 5
+    topK: number = 5,
+    embedding?: number[] // Optional pre-computed embedding
   ): Promise<Record<string, {
     videoUrl: string;
     videoId?: number;
@@ -620,21 +621,37 @@ Style:
       return {};
     }
 
-    // Create search promises for each collection
+    // Pre-compute embedding once if not provided
+    let queryEmbedding = embedding;
+    if (!queryEmbedding) {
+      const defaultNamespace = createCollectionNamespace(userId, collections[0], "video");
+      const defaultVectorDB = new VectorDBService(defaultNamespace, userId);
+      queryEmbedding = await defaultVectorDB.getEmbedding(query);
+    }
+
+    // Create search promises for each collection using pre-computed embedding
     const searchPromises = collections.map(async (collectionName) => {
       try {
         // Use collection-based namespace for videos
         const namespace = createCollectionNamespace(userId, collectionName, "video");
-        const vectorDB = new VectorDBService(namespace);
-        const results = await vectorDB.query(query, topK * 3); // Get more results to group
+        console.log(`[video-search] Searching collection "${collectionName}" in namespace: ${namespace}`);
+        const vectorDB = new VectorDBService(namespace, userId);
+        
+        // Use pre-computed embedding for parallel searches
+        const results = queryEmbedding
+          ? await vectorDB.queryWithEmbedding(queryEmbedding, topK * 3)
+          : await vectorDB.query(query, topK * 3);
 
         // If searching "Default" and no results, also try legacy namespace for backward compatibility
         if (collectionName === "Default" && results.matches.length === 0) {
-          console.log(`No results in new namespace for Default videos, trying legacy namespace...`);
+          console.log(`[video-search] No results in collection namespace for Default, trying legacy namespace...`);
           try {
             const legacyNamespace = createUserNamespace(userId, "video"); // Legacy: user-{userId}-videos
-            const legacyVectorDB = new VectorDBService(legacyNamespace);
-            const legacyResults = await legacyVectorDB.query(query, topK * 3);
+            console.log(`[video-search] Searching legacy namespace: ${legacyNamespace}`);
+            const legacyVectorDB = new VectorDBService(legacyNamespace, userId);
+            const legacyResults = queryEmbedding
+              ? await legacyVectorDB.queryWithEmbedding(queryEmbedding, topK * 3)
+              : await legacyVectorDB.query(query, topK * 3);
             return legacyResults.matches.map((m) => ({
               id: m.id || "",
               score: m.score || 0,
