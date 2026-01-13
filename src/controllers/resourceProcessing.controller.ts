@@ -342,20 +342,36 @@ class ResourceProcessingController {
     const searchPromise = (async () => {
       try {
         // Skip expansion for short/specific queries
+        // For "Drone footage" (13 chars, 2 words): shouldExpand = false
         const shouldExpand =
           query.length > 10 && query.split(" ").length > 2;
 
-        // Run expansion and embedding in parallel if needed
-        const [expandedQueryResult, embedding] = shouldExpand
-          ? await Promise.all([
+        console.log(`[search-controller] Query analysis - length: ${query.length}, words: ${query.split(" ").length}, shouldExpand: ${shouldExpand}`);
+
+        let embedding: number[];
+        let expandedQueryResult: string;
+
+        try {
+          // Always get embedding, optionally expand query
+          if (shouldExpand) {
+            [expandedQueryResult, embedding] = await Promise.all([
               this.resourceProcessingService.expandQuery(
                 `User Query: "${query}"\nExpanded:`,
                 userId,
                 endpoint
               ),
               this.resourceProcessingService.getEmbedding(query, userId),
-            ])
-          : [query, await this.resourceProcessingService.getEmbedding(query, userId)];
+            ]);
+          } else {
+            expandedQueryResult = query;
+            embedding = await this.resourceProcessingService.getEmbedding(query, userId);
+          }
+        } catch (embedError: any) {
+          console.error(`[search-controller] Error getting embedding:`, embedError);
+          // Fallback: use query as-is
+          expandedQueryResult = query;
+          embedding = undefined!;
+        }
 
         expandedQuery = expandedQueryResult;
 

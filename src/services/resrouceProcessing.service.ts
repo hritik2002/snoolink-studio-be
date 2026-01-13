@@ -144,10 +144,15 @@ export class ResourceProcessingService {
 
   /**
    * Get embedding for a query (for parallel operations)
+   * Uses Default collection namespace to get embedding
    */
   async getEmbedding(query: string, userId: string): Promise<number[]> {
     const db = this.getCollectionVectorDB(userId, "Default");
-    return db.getEmbedding(query);
+    const namespace = createCollectionNamespace(userId, "Default", "image");
+    console.log(`[image-search] Getting embedding for query "${query}" using namespace: ${namespace}`);
+    const embedding = await db.getEmbedding(query);
+    console.log(`[image-search] Embedding generated, length: ${embedding.length}`);
+    return embedding;
   }
 
   /**
@@ -172,14 +177,20 @@ export class ResourceProcessingService {
       return [];
     }
 
-    console.log("collections", collections);
+    console.log(`[image-search] searchMultipleCollections called with collections: [${collections.join(", ")}], topK: ${topK}, hasEmbedding: ${!!embedding}`);
 
     // Pre-compute embedding once if not provided
-    const queryEmbedding =
-      embedding ||
-      (await this.getCollectionVectorDB(userId, collections[0]).getEmbedding(
-        query
-      ));
+    let queryEmbedding: number[];
+    if (embedding) {
+      queryEmbedding = embedding;
+      console.log(`[image-search] Using provided embedding, length: ${embedding.length}`);
+    } else {
+      const firstCollection = collections[0];
+      const namespace = createCollectionNamespace(userId, firstCollection, "image");
+      console.log(`[image-search] Computing embedding using first collection "${firstCollection}" (namespace: ${namespace})`);
+      queryEmbedding = await this.getCollectionVectorDB(userId, firstCollection).getEmbedding(query);
+      console.log(`[image-search] Embedding computed, length: ${queryEmbedding.length}`);
+    }
 
     // Create search promises for each collection using pre-computed embedding
     const searchPromises = collections.map(async (collectionName) => {
@@ -194,10 +205,11 @@ export class ResourceProcessingService {
         
         console.log(`[image-search] Collection "${collectionName}": Found ${results.matches.length} results (scores: ${results.matches.map(m => m.score?.toFixed(3)).join(", ") || "none"})`);
 
-        // If searching "Default" and no results, also try legacy namespace for backward compatibility
-        if (collectionName === "Default" && results.matches.length === 0) {
+        // If no results in collection namespace, try legacy namespace for backward compatibility
+        // Try for ALL collections, not just "Default", in case data is in legacy namespace
+        if (results.matches.length === 0) {
           console.log(
-            `[image-search] No results in collection namespace for Default, trying legacy namespace...`
+            `[image-search] No results in collection namespace "${collectionName}", trying legacy namespace...`
           );
           try {
             const legacyDb = this.getVectorDB(userId); // Legacy namespace: user-{userId}-images
@@ -209,12 +221,14 @@ export class ResourceProcessingService {
               0.5 // Lower minScore
             );
             console.log(`[image-search] Legacy namespace: Found ${legacyResults.matches.length} results`);
-            return legacyResults.matches.map((m) => ({
-              id: m.id,
-              score: m.score ?? 0,
-              imageUrl: (m.metadata?.imageUrl as string) ?? "",
-              collectionName,
-            }));
+            if (legacyResults.matches.length > 0) {
+              return legacyResults.matches.map((m) => ({
+                id: m.id,
+                score: m.score ?? 0,
+                imageUrl: (m.metadata?.imageUrl as string) ?? "",
+                collectionName, // Keep original collection name even though data is from legacy
+              }));
+            }
           } catch (legacyError) {
             console.error(`[image-search] Error searching legacy namespace:`, legacyError);
           }

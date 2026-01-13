@@ -637,10 +637,10 @@ Style:
         console.log(`[video-search] Searching collection "${collectionName}" in namespace: ${namespace}`);
         const vectorDB = new VectorDBService(namespace, userId);
         
-        // Use pre-computed embedding for parallel searches
+        // Use pre-computed embedding for parallel searches (use same minScore as image search: 0.5)
         const results = queryEmbedding
-          ? await vectorDB.queryWithEmbedding(queryEmbedding, topK * 3)
-          : await vectorDB.query(query, topK * 3);
+          ? await vectorDB.queryWithEmbedding(queryEmbedding, topK * 3, 0.5)
+          : await vectorDB.query(query, topK * 3, 0.5);
 
         // If searching "Default" and no results, also try legacy namespace for backward compatibility
         if (collectionName === "Default" && results.matches.length === 0) {
@@ -650,8 +650,8 @@ Style:
             console.log(`[video-search] Searching legacy namespace: ${legacyNamespace}`);
             const legacyVectorDB = new VectorDBService(legacyNamespace, userId);
             const legacyResults = queryEmbedding
-              ? await legacyVectorDB.queryWithEmbedding(queryEmbedding, topK * 3)
-              : await legacyVectorDB.query(query, topK * 3);
+              ? await legacyVectorDB.queryWithEmbedding(queryEmbedding, topK * 3, 0.5)
+              : await legacyVectorDB.query(query, topK * 3, 0.5);
             return legacyResults.matches.map((m) => ({
               id: m.id || "",
               score: m.score || 0,
