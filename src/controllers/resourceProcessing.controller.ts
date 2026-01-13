@@ -160,7 +160,8 @@ class ResourceProcessingController {
     query: string,
     userId: string,
     endpoint: string = "/api/media/search-images",
-    method: string = "GET"
+    method: string = "GET",
+    collectionName: string = "Default" // Accept collection name parameter
   ) {
     const startTime = Date.now();
     let expandedQuery: string | null = null;
@@ -171,7 +172,7 @@ class ResourceProcessingController {
     const cacheKey = this.getSearchCacheKey(
       userId,
       query, // Use original query for cache key
-      ["Default"],
+      [collectionName], // Use provided collection name
       5,
       "image"
     );
@@ -228,13 +229,13 @@ class ResourceProcessingController {
           query: expandedQuery,
           userId,
           embedding: embedding && embedding.length > 0 ? embedding : undefined, // Only pass if valid
-          collectionName: "Default",
+          collectionName, // Use provided collection name
         });
 
         const response = {
           results,
           expandedQuery,
-          collectionsSearched: ["Default"],
+          collectionsSearched: [collectionName], // Use provided collection name
         };
 
         // Cache the results (15 minutes TTL for search results)

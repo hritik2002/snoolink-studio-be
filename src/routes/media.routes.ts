@@ -65,17 +65,22 @@ router.post("/upload-images", async (req, res) => {
 });
 
 router.get("/search-images", async (req, res) => {
-  const { query } = req.query;
+  const { query, collection } = req.query;
   if (!query || typeof query !== "string" || !query.trim()) {
     return res.status(400).json({ error: "Search query is required" });
   }
+  
+  // Use collection from query param or default to "Default"
+  const collectionName = (collection as string) || "Default";
+  
   try {
-    console.log(`[search-images] Starting search for query: "${query}", userId: ${req.user!.id}`);
+    console.log(`[search-images] Starting search for query: "${query}", collection: "${collectionName}", userId: ${req.user!.id}`);
     const results = await resourceProcessingController.searchImages(
       query,
       req.user!.id,
       "/api/media/search-images",
-      req.method
+      req.method,
+      collectionName // Pass collection name
     );
     console.log(`[search-images] Search completed, found ${results?.results?.length || 0} results`);
     res.json({ success: true, data: results });
