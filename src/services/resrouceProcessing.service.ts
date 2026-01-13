@@ -77,46 +77,62 @@ export class ResourceProcessingService {
     embedding?: number[]; // Optional pre-computed embedding
     collectionName?: string;
   }) {
-    // Use collection-based namespace (not legacy)
-    const db = this.getCollectionVectorDB(userId, collectionName);
-    
-    // Use pre-computed embedding if provided, otherwise query normally
-    const results = embedding
-      ? await db.queryWithEmbedding(embedding, topK).then((res) =>
-          res.matches.map((m) => ({
-            id: m.id,
-            score: m.score,
-            imageUrl: m.metadata?.imageUrl ?? "",
-          }))
-        )
-      : await db.query(query, topK).then((res) =>
-          res.matches.map((m) => ({
-            id: m.id,
-            score: m.score,
-            imageUrl: m.metadata?.imageUrl ?? "",
-          }))
-        );
+    try {
+      // Use collection-based namespace (not legacy)
+      const db = this.getCollectionVectorDB(userId, collectionName);
+      
+      // Use pre-computed embedding if provided, otherwise query normally
+      let results: Array<{
+        id: string;
+        score: number;
+        imageUrl: string;
+      }> = [];
 
-    // If no results in collection namespace and searching "Default", try legacy namespace
-    if (results.length === 0 && collectionName === "Default") {
-      console.log(`No results in collection namespace for Default, trying legacy namespace...`);
-      try {
-        const legacyDb = this.getVectorDB(userId); // Legacy namespace: user-{userId}-images
-        const legacyResults = embedding
-          ? await legacyDb.queryWithEmbedding(embedding, topK)
-          : await legacyDb.query(query, topK);
-        
-        return legacyResults.matches.map((m) => ({
-          id: m.id,
-          score: m.score ?? 0,
+      if (embedding) {
+        const queryResult = await db.queryWithEmbedding(embedding, topK);
+        results = queryResult.matches.map((m) => ({
+          id: m.id || "",
+          score: m.score || 0,
           imageUrl: (m.metadata?.imageUrl as string) ?? "",
         }));
-      } catch (legacyError) {
-        console.error(`Error searching legacy namespace:`, legacyError);
+      } else {
+        const queryResult = await db.query(query, topK);
+        results = queryResult.matches.map((m) => ({
+          id: m.id || "",
+          score: m.score || 0,
+          imageUrl: (m.metadata?.imageUrl as string) ?? "",
+        }));
       }
-    }
 
-    return results;
+      // If no results in collection namespace and searching "Default", try legacy namespace
+      if (results.length === 0 && collectionName === "Default") {
+        console.log(
+          `No results in collection namespace for Default, trying legacy namespace...`
+        );
+        try {
+          const legacyDb = this.getVectorDB(userId); // Legacy namespace: user-{userId}-images
+          const legacyResults = embedding
+            ? await legacyDb.queryWithEmbedding(embedding, topK)
+            : await legacyDb.query(query, topK);
+
+          return legacyResults.matches.map((m) => ({
+            id: m.id || "",
+            score: m.score ?? 0,
+            imageUrl: (m.metadata?.imageUrl as string) ?? "",
+          }));
+        } catch (legacyError) {
+          console.error(`Error searching legacy namespace:`, legacyError);
+          // Return empty results if legacy search also fails
+          return [];
+        }
+      }
+
+      return results;
+    } catch (error) {
+      console.error(`Error in searchImages for collection ${collectionName}:`, error);
+      // Return empty array on error instead of throwing
+      return [];
+    }
   }
 
   /**

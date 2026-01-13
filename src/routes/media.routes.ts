@@ -70,15 +70,22 @@ router.get("/search-images", async (req, res) => {
     return res.status(400).json({ error: "Search query is required" });
   }
   try {
+    console.log(`[search-images] Starting search for query: "${query}", userId: ${req.user!.id}`);
     const results = await resourceProcessingController.searchImages(
       query,
       req.user!.id,
       "/api/media/search-images",
       req.method
     );
+    console.log(`[search-images] Search completed, found ${results?.results?.length || 0} results`);
     res.json({ success: true, data: results });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error(`[search-images] Error:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: error?.message || "Internal server error",
+      details: process.env.NODE_ENV === "development" ? error?.stack : undefined
+    });
   }
 });
 
@@ -142,6 +149,7 @@ router.get("/search", async (req, res) => {
       }
     }
 
+    console.log(`[search] Starting search for query: "${query}", collections: ${collectionNames.join(", ")}, userId: ${userId}`);
     const results = await resourceProcessingController.searchMultipleCollections(
       query,
       userId,
@@ -150,11 +158,16 @@ router.get("/search", async (req, res) => {
       "/api/media/search",
       req.method
     );
-
+    console.log(`[search] Search completed, found ${results?.results?.length || 0} results`);
     res.json({ success: true, data: results });
   } catch (error: any) {
-    console.error("Error in multi-collection search:", error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error("[search] Error in multi-collection search:", error);
+    console.error("[search] Error stack:", error?.stack);
+    res.status(500).json({ 
+      success: false, 
+      error: error?.message || "Internal server error",
+      details: process.env.NODE_ENV === "development" ? error?.stack : undefined
+    });
   }
 });
 

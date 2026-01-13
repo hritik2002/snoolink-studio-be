@@ -195,25 +195,39 @@ class ResourceProcessingController {
         const shouldExpand =
           query.length > 10 && query.split(" ").length > 2;
 
-        // Run expansion and embedding in parallel if needed
-        const [expandedQueryResult, embedding] = shouldExpand
-          ? await Promise.all([
+        let embedding: number[];
+        let expandedQueryResult: string;
+
+        try {
+          // Run expansion and embedding in parallel if needed
+          if (shouldExpand) {
+            [expandedQueryResult, embedding] = await Promise.all([
               this.resourceProcessingService.expandQuery(
                 `User Query: "${query}"\nExpanded:`,
                 userId,
                 endpoint
               ),
               this.resourceProcessingService.getEmbedding(query, userId),
-            ])
-          : [query, await this.resourceProcessingService.getEmbedding(query, userId)];
+            ]);
+          } else {
+            // For short queries, still get embedding but don't expand
+            expandedQueryResult = query;
+            embedding = await this.resourceProcessingService.getEmbedding(query, userId);
+          }
+        } catch (embedError: any) {
+          console.error(`Error getting embedding or expanding query:`, embedError);
+          // Fallback: use query as-is and let searchImages handle embedding
+          expandedQueryResult = query;
+          embedding = undefined!; // Will trigger normal query path in searchImages
+        }
 
         expandedQuery = expandedQueryResult;
 
-        // Use pre-computed embedding for search
+        // Use pre-computed embedding for search (if available)
         results = await this.resourceProcessingService.searchImages({
           query: expandedQuery,
           userId,
-          embedding, // Pass pre-computed embedding
+          embedding: embedding && embedding.length > 0 ? embedding : undefined, // Only pass if valid
           collectionName: "Default",
         });
 
