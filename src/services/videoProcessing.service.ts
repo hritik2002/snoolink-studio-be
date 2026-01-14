@@ -5,7 +5,7 @@ import { OpenAI } from "openai";
 import { v2 as cloudinary } from "cloudinary";
 import { CONFIG } from "../config";
 import { VectorDBService } from "./vectordb.service";
-import { createUserNamespace, createCollectionNamespace } from "../utils/namespace";
+import { createCollectionNamespace } from "../utils/namespace";
 import { CostTrackingService } from "./costTracking.service";
 import util from "util";
 import child_process from "child_process";
@@ -562,31 +562,6 @@ Style:
     }
   }
 
-  /**
-   * Search for video clips by text query
-   */
-  async searchVideos(query: string, userId: string, topK: number = 5): Promise<Array<{
-    id: string;
-    score: number;
-    text: string;
-    videoUrl?: string;
-    startTime?: string;
-    endTime?: string;
-  }>> {
-    const namespace = createUserNamespace(userId, "video");
-    const vectorDB = new VectorDBService(namespace);
-
-    const results = await vectorDB.query(query, topK);
-
-    return results.matches.map((m) => ({
-      id: m.id || "",
-      score: m.score || 0,
-      text: (m.metadata?.text as string) || "",
-      videoUrl: m.metadata?.videoUrl as string | undefined,
-      startTime: m.metadata?.startTime as string | undefined,
-      endTime: m.metadata?.endTime as string | undefined,
-    }));
-  }
 
   /**
    * Search videos across multiple collections using Promise.all
@@ -596,8 +571,7 @@ Style:
     query: string,
     userId: string,
     collections: string[],
-    topK: number = 5,
-    embedding?: number[]
+    topK: number = 5
   ): Promise<Record<string, {
     videoUrl: string;
     videoId?: number;
@@ -617,16 +591,8 @@ Style:
       return {};
     }
 
-    // Pre-compute embedding once if not provided, using first collection
-    let queryEmbedding = embedding;
-    if (!queryEmbedding) {
-      const namespace = createCollectionNamespace(userId, collections[0], "video");
-      const vectorDB = new VectorDBService(namespace, userId);
-      queryEmbedding = await vectorDB.getEmbedding(query);
-    }
-
-    // Track if we've tried legacy namespace
-    let legacySearched = false;
+    console.log(`Collections: ${collections}`);
+    console.log(`Searching for query: ${query} in collections: ${collections}`);
 
     // Create search promises for each collection
     const searchPromises = collections.map(async (collectionName) => {
@@ -634,9 +600,11 @@ Style:
         const namespace = createCollectionNamespace(userId, collectionName, "video");
         const vectorDB = new VectorDBService(namespace, userId);
         
-        const results = queryEmbedding
-          ? await vectorDB.queryWithEmbedding(queryEmbedding, topK * 3, 0.5)
-          : await vectorDB.query(query, topK * 3, 0.5);
+        // VectorDB.query() will generate and cache the embedding
+        const results = await vectorDB.query(query, topK, 0.5);
+
+
+        console.log(`Results: `, results.matches);
 
         if (results.matches.length > 0) {
           return results.matches.map((m) => ({
@@ -651,40 +619,17 @@ Style:
         }
 
         return [];
-      } catch {
+      } catch(error) {
+        console.error(`Error searching for query: ${query} in collection: ${collectionName}`, error);
         return [];
       }
     });
 
     // Execute all searches in parallel
     const allResults = await Promise.all(searchPromises);
-
+    console.log(`All results: ${allResults}`);
     // Flatten results
-    let mergedResults = allResults.flat();
-
-    // If no results from collection namespaces, try legacy namespace once
-    if (mergedResults.length === 0 && !legacySearched) {
-      legacySearched = true;
-      try {
-        const legacyNamespace = createUserNamespace(userId, "video");
-        const legacyVectorDB = new VectorDBService(legacyNamespace, userId);
-        const legacyQueryResults = queryEmbedding
-          ? await legacyVectorDB.queryWithEmbedding(queryEmbedding, topK * 3, 0.5)
-          : await legacyVectorDB.query(query, topK * 3, 0.5);
-        
-        mergedResults = legacyQueryResults.matches.map((m) => ({
-          id: m.id || "",
-          score: m.score || 0,
-          text: (m.metadata?.text as string) || "",
-          videoUrl: m.metadata?.videoUrl as string | undefined,
-          startTime: m.metadata?.startTime as string | undefined,
-          endTime: m.metadata?.endTime as string | undefined,
-          collectionName: collections[0],
-        }));
-      } catch {
-        // Legacy search failed
-      }
-    }
+    const mergedResults = allResults.flat();
 
 
     // Group ALL clips by videoUrl - every clip with the same videoUrl goes into the same group

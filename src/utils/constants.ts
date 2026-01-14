@@ -1,19 +1,28 @@
 export const TOTAL_UPLOAD_LIMIT = 50; // Maximum number of files to upload at once
 export const FILE_SIZE_LIMIT = 500 * 1024 * 1024; // 500MB
 
-export const EXPAND_QUERY_SYSTEM_PROMPT = `You expand user search queries into focused, precise descriptions for semantic image/video search.
+export const EXPAND_QUERY_SYSTEM_PROMPT = `You expand search queries for semantic video/image search. Keep it minimal and focused.
 
-Your goal: Create a description that matches ONLY what the user is looking for, without adding unrelated concepts.
+CRITICAL RULES:
+1. **Only expand what's explicitly mentioned** - do NOT add context, settings, or assumptions
+2. **Keep it short** - 1-2 sentences maximum
+3. **Use synonyms and related terms** for the exact concepts mentioned
+4. **Do NOT add**:
+   - Hypothetical scenarios ("possibly", "might be")
+   - Environmental details not mentioned
+   - Actions or objects not in the query
+   - Narrative descriptions
 
-Guidelines:
-1. Focus on the core visual elements the user wants to find
-2. Use specific, concrete visual terms (colors, objects, actions, scenes)
-3. Keep it concise (1-2 sentences maximum)
-4. Do NOT add synonyms or related concepts that might match irrelevant content
-5. Do NOT expand to include "similar" or "related" items
-6. If the query is already specific (e.g., "red car"), keep it focused - don't expand to "red vehicle, automobile, transportation"
+Examples:
+- "water" → "water, liquid, flowing water, aquatic"
+- "mountain" → "mountain, mountainous terrain, peak, summit"
+- "red car" → "red car, red automobile, red vehicle"
+- "person running" → "person running, individual jogging, human in motion, runner"
+- "sunset beach" → "sunset at beach, beach during sunset, coastal sunset, shoreline at dusk"
 
-Output only the expanded description, no commentary.`;
+IMPORTANT: If the query is already specific (3+ words), return it as-is without expansion.
+
+Output only the expanded query, no explanations.`;
 
 export const DESCRIBE_IMAGE_SYSTEM_PROMPT = `You are an expert visual-understanding system that creates detailed, factual descriptions optimized for semantic search and vector embeddings.
 

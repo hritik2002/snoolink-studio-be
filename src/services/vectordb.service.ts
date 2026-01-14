@@ -150,67 +150,77 @@ export class VectorDBService {
     return this.embed(text, "query");
   }
 
-  async query(text: string, topK: number = 5, minScore: number = 0.5) {
-    return Promise.race([
-      this.performQuery(text, topK, minScore),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Query timeout after 5s")), 5000)
-      ),
-    ]);
-  }
-
-  private async performQuery(text: string, topK: number, minScore: number) {
-    const embedding = await this.embed(text, "query");
-    const result = await this.db
-      .index(CONFIG.pinecone.index)
-      .namespace(this.namespace)
-      .query({
-        vector: embedding,
-        topK: topK * 2,
-        includeMetadata: true,
-      });
-
-    const filteredMatches = result.matches.filter(
-      (m) => (m.score || 0) >= minScore
-    );
-
-    return {
-      ...result,
-      matches: filteredMatches.slice(0, topK),
-    };
-  }
-
-  async queryWithEmbedding(
-    embedding: number[],
+  /**
+   * Query vector database
+   * @param textOrEmbedding - Query text or pre-computed embedding
+   * @param topK - Number of results to return
+   * @param minScore - Minimum similarity score threshold (0.5 default)
+   */
+  async query(
+    text: string,
     topK: number = 5,
     minScore: number = 0.5
   ) {
+    // Longer timeout to account for embedding generation + Pinecone query
     return Promise.race([
-      this.performQueryWithEmbedding(embedding, topK, minScore),
+      this.performQuery(text, topK, minScore),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Query timeout after 5s")), 5000)
+        setTimeout(() => reject(new Error("Query timeout after 30s")), 30000)
       ),
     ]);
   }
 
-  private async performQueryWithEmbedding(
-    embedding: number[],
+  private async performQuery(
+    text: string,
     topK: number,
     minScore: number
   ) {
+    const startTime = Date.now();
+    
+    const embedding = await this.embed(text, "query");
+    
+    const embeddingTime = Date.now() - startTime;
+    
+    console.log(`\n🔍 [SEARCH DEBUG] ==================`);
+    console.log(`Query: "${text.substring(0, 150)}..."`);
+    console.log(`Namespace: ${this.namespace}`);
+    console.log(`Embedding time: ${embeddingTime}ms`);
+    console.log(`Requesting topK: ${topK * 3}, minScore filter: ${minScore}`);
+
+    // Fetch more results than needed to account for filtering
+    const fetchTopK = topK * 3;
+
     const result = await this.db
       .index(CONFIG.pinecone.index)
       .namespace(this.namespace)
       .query({
         vector: embedding,
-        topK: topK * 2,
+        topK: fetchTopK,
         includeMetadata: true,
       });
 
-    const filteredMatches = result.matches.filter(
-      (m) => (m.score || 0) >= minScore
-    );
+    console.log(`\n📊 Raw Pinecone Results (${result.matches.length}):`);
+    result.matches.slice(0, 5).forEach((m, idx) => {
+      console.log(`  ${idx + 1}. Score: ${(m.score || 0).toFixed(4)} | ID: ${m.id?.substring(0, 40)}`);
+      const text = m.metadata?.text as string;
+      if (text) {
+        console.log(`     Preview: ${text.substring(0, 100)}...`);
+      }
+    });
 
+    // Filter by minimum score threshold
+    const filteredMatches = result.matches.filter(
+      (m) => (m.score || 0) >= 0.009
+    ).sort((a, b) => (b.score ?? 0) - (a.score ?? 0)); // Sort by score descending
+
+    console.log(`\n✅ After filtering (score >= ${minScore}): ${filteredMatches.length} results`);
+    if (filteredMatches.length > 0) {
+      console.log(`   Best score: ${filteredMatches[0].score?.toFixed(4)}`);
+      console.log(`   Worst score: ${filteredMatches[filteredMatches.length - 1].score?.toFixed(4)}`);
+    }
+    console.log(`🔍 [SEARCH DEBUG] ==================\n`);
+
+    // Return only the requested number of results
     return {
       ...result,
       matches: filteredMatches.slice(0, topK),

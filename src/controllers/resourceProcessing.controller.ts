@@ -182,39 +182,22 @@ class ResourceProcessingController {
     // Create search promise
     const searchPromise = (async () => {
       try {
-        // Skip expansion for short/specific queries
-        const shouldExpand =
-          query.length > 10 && query.split(" ").length > 2;
-
-        let embedding: number[];
+        // Expand queries to match detailed database descriptions
         let expandedQueryResult: string;
-
         try {
-          // Run expansion and embedding in parallel if needed
-          if (shouldExpand) {
-            [expandedQueryResult, embedding] = await Promise.all([
-              this.resourceProcessingService.expandQuery(
-                `User Query: "${query}"\nExpanded:`,
-                userId,
-                endpoint
-              ),
-              this.resourceProcessingService.getEmbedding(query, userId, collectionName),
-            ]);
-          } else {
-            expandedQueryResult = query;
-            embedding = await this.resourceProcessingService.getEmbedding(query, userId, collectionName);
-          }
+          expandedQueryResult = await this.resourceProcessingService.expandQuery(
+            `User Query: "${query}"\nExpanded:`,
+            userId,
+            endpoint
+          );
         } catch {
-          expandedQueryResult = query;
-          embedding = undefined!;
+          expandedQueryResult = query; // Fallback to original on error
         }
-
         expandedQuery = expandedQueryResult;
 
         results = await this.resourceProcessingService.searchImages({
           query: expandedQuery,
           userId,
-          embedding: embedding && embedding.length > 0 ? embedding : undefined,
           collectionName,
         });
 
@@ -326,42 +309,26 @@ class ResourceProcessingController {
     // Create search promise
     const searchPromise = (async () => {
       try {
-        // Skip expansion for short/specific queries
-        const shouldExpand = query.length > 10 && query.split(" ").length > 2;
-
-        let embedding: number[];
+        // Expand queries to match detailed database descriptions
         let expandedQueryResult: string;
-
         try {
-          // Use first collection for embedding (embedding itself doesn't depend on namespace)
-          const firstCollection = collections[0];
-          if (shouldExpand) {
-            [expandedQueryResult, embedding] = await Promise.all([
-              this.resourceProcessingService.expandQuery(
-                `User Query: "${query}"\nExpanded:`,
-                userId,
-                endpoint
-              ),
-              this.resourceProcessingService.getEmbedding(query, userId, firstCollection),
-            ]);
-          } else {
-            expandedQueryResult = query;
-            embedding = await this.resourceProcessingService.getEmbedding(query, userId, firstCollection);
-          }
+          expandedQueryResult = await this.resourceProcessingService.expandQuery(
+            `User Query: "${query}"\nExpanded:`,
+            userId,
+            endpoint
+          );
         } catch {
-          expandedQueryResult = query;
-          embedding = undefined!;
+          expandedQueryResult = query; // Fallback to original on error
         }
-
         expandedQuery = expandedQueryResult;
 
-        results = await this.resourceProcessingService.searchMultipleCollections({
-          query: expandedQuery,
-          userId,
-          collections,
-          topK,
-          embedding,
-        });
+        results =
+          await this.resourceProcessingService.searchMultipleCollections({
+            query: expandedQuery,
+            userId,
+            collections,
+            topK,
+          });
 
         const response = {
           results,
@@ -551,26 +518,6 @@ class ResourceProcessingController {
   }
 
   /**
-   * Search for video clips by text query
-   */
-  async searchVideos(
-    query: string,
-    userId: string,
-    topK: number = 5
-  ): Promise<
-    Array<{
-      id: string;
-      score: number;
-      text: string;
-      videoUrl?: string;
-      startTime?: string;
-      endTime?: string;
-    }>
-  > {
-    return await this.videoProcessingService.searchVideos(query, userId, topK);
-  }
-
-  /**
    * Search videos across multiple collections
    */
   async searchVideosMultipleCollections(
@@ -618,50 +565,36 @@ class ResourceProcessingController {
     // Create search promise
     const searchPromise = (async () => {
       try {
-        const shouldExpand = query.length > 10 && query.split(" ").length > 2;
-
-        let embedding: number[];
+        // Expand queries to match detailed database descriptions
         let expandedQueryResult: string;
-
         try {
-          const { VectorDBService } = await import("../services/vectordb.service");
-          const { createCollectionNamespace } = await import("../utils/namespace");
-          
-          // Use first collection from the passed collections array
-          const firstCollection = collections[0];
-          const namespace = createCollectionNamespace(userId, firstCollection, "video");
-          const videoVectorDB = new VectorDBService(namespace, userId);
-          embedding = await videoVectorDB.getEmbedding(query);
-
-          if (shouldExpand) {
-            expandedQueryResult = await this.resourceProcessingService.expandQuery(
-              `User Query: "${query}"\nExpanded:`,
-              userId,
-              endpoint
-            );
-          } else {
-            expandedQueryResult = query;
-          }
+          expandedQueryResult = await this.resourceProcessingService.expandQuery(
+            `User Query: "${query}"\nExpanded:`,
+            userId,
+            endpoint
+          );
         } catch {
-          expandedQueryResult = query;
-          embedding = undefined!;
+          expandedQueryResult = query; // Fallback to original on error
         }
-
         expandedQuery = expandedQueryResult;
 
-        const groupedResults = await this.videoProcessingService.searchVideosMultipleCollections(
-          expandedQuery,
-          userId,
-          collections,
-          topK,
-          embedding && embedding.length > 0 ? embedding : undefined
-        );
+        const groupedResults =
+          await this.videoProcessingService.searchVideosMultipleCollections(
+            expandedQuery,
+            userId,
+            collections,
+            topK
+          );
 
         const enrichedResults: Record<string, any> = {};
 
         for (const [videoUrl, videoResult] of Object.entries(groupedResults)) {
           try {
-            const videoMetadata = await this.supabaseService.getVideoMetadataByUrl(userId, videoUrl);
+            const videoMetadata =
+              await this.supabaseService.getVideoMetadataByUrl(
+                userId,
+                videoUrl
+              );
             enrichedResults[videoUrl] = {
               ...videoResult,
               videoId: videoMetadata?.id,

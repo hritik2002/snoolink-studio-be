@@ -13,30 +13,25 @@ class RedisService {
         username: CONFIG.redis.username,
         password: CONFIG.redis.password,
         db: CONFIG.redis.db,
-        maxRetriesPerRequest: null,
-        retryStrategy: (times: number) => Math.min(times * 50, 2000),
-        // Optimize connection pooling
+        maxRetriesPerRequest: null, // Required for BullMQ
+        retryStrategy: (times: number) => Math.min(times * 100, 3000),
         enableReadyCheck: true,
         lazyConnect: false,
-        connectTimeout: 10000,
-        commandTimeout: 5000,
-        // Use pipeline for batch operations
-        enableOfflineQueue: false,
-        // Connection pool settings
+        connectTimeout: 30000, // 30s connection timeout
+        // Removed commandTimeout - let BullMQ handle job timeouts
+        enableOfflineQueue: true, // Queue commands when disconnected
         keepAlive: 30000,
-        family: 4, // Use IPv4
+        family: 4,
       };
-
-      console.log(redisConfig);
 
       this.client = new Redis(redisConfig);
 
-      this.client.on("error", (error) => {
-        console.error("Redis connection error:", error);
+      this.client.on("error", () => {
+        // Silently handle errors - retryStrategy will reconnect
       });
 
-      this.client.on("connect", async () => {
-        console.log("Redis connected successfully");
+      this.client.on("connect", () => {
+        // Connection established
       });
     }
 
@@ -59,8 +54,7 @@ class RedisService {
       const value = await client.get(key);
       if (!value) return null;
       return JSON.parse(value) as T;
-    } catch (error) {
-      console.error(`Redis get error for key ${key}:`, error);
+    } catch {
       return null;
     }
   }
@@ -78,8 +72,7 @@ class RedisService {
         await client.set(key, serialized);
       }
       return true;
-    } catch (error) {
-      console.error(`Redis set error for key ${key}:`, error);
+    } catch {
       return false;
     }
   }
@@ -92,8 +85,7 @@ class RedisService {
       const client = this.getClient();
       const result = await client.del(key);
       return result > 0;
-    } catch (error) {
-      console.error(`Redis delete error for key ${key}:`, error);
+    } catch {
       return false;
     }
   }
@@ -128,12 +120,10 @@ class RedisService {
         });
 
         stream.on("error", (error) => {
-          console.error(`Redis deletePattern error for pattern ${pattern}:`, error);
           reject(error);
         });
       });
-    } catch (error) {
-      console.error(`Redis deletePattern error for pattern ${pattern}:`, error);
+    } catch {
       return 0;
     }
   }
