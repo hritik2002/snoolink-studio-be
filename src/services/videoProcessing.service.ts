@@ -17,6 +17,8 @@ const CHUNK_SIZE_SECONDS = 5; // Legacy - kept for fallback
 const SCENE_DETECTION_THRESHOLD = 0.3; // FFmpeg scene detection sensitivity (0.0-1.0, lower = more sensitive)
 const KEYFRAMES_PER_SCENE = 1; // Extract 1-2 keyframes per scene
 const FRAME_SAMPLE_RATE = 1.5; // Sample at 1-2 fps for additional context
+const MAX_SCENE_DURATION = 10; // If scene is longer than this, sample at regular intervals (seconds)
+const KEYFRAME_INTERVAL = 5; // Extract keyframe every N seconds for long scenes
 
 // Configure Cloudinary
 cloudinary.config({ ...CONFIG.cloudinary });
@@ -203,7 +205,8 @@ export class VideoProcessingService {
 
   /**
    * Extract keyframes from a scene
-   * Extracts 1-2 keyframes per scene (typically middle frame + optional frame)
+   * For short scenes: extracts 1-2 keyframes (middle or 1/3, 2/3)
+   * For long scenes (>MAX_SCENE_DURATION): samples at regular intervals
    * Keyframes are chosen to be most representative of the scene content
    */
   private async extractKeyframesFromScene(
@@ -218,50 +221,89 @@ export class VideoProcessingService {
     const sceneDuration = scene.end - scene.start;
     const keyframes: string[] = [];
 
-    // Extract keyframes from scene based on configuration
-    if (KEYFRAMES_PER_SCENE === 1) {
-      // Extract middle frame of the scene (most representative)
-      // Middle frame avoids transition artifacts at scene boundaries
-      const middleTime = scene.start + sceneDuration / 2;
-      const framePath = path.join(outputDir, `keyframe_${scene.index}_0.jpg`);
+    // For long scenes, sample at regular intervals instead of just 1-2 keyframes
+    if (sceneDuration > MAX_SCENE_DURATION) {
+      // Sample keyframes every KEYFRAME_INTERVAL seconds
+      const numKeyframes = Math.ceil(sceneDuration / KEYFRAME_INTERVAL);
+      const keyframeTimes: number[] = [];
       
-      try {
-        // Use -ss before -i for faster seeking (input seeking)
-        await exec(
-          `ffmpeg -y -ss ${middleTime.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${framePath}"`
-        );
-        
-        if (fs.existsSync(framePath) && fs.statSync(framePath).size > 0) {
-          keyframes.push(framePath);
-        } else {
-          console.warn(`Failed to extract keyframe for scene ${scene.index} at ${middleTime.toFixed(1)}s`);
+      // Start from middle of first interval, then sample every KEYFRAME_INTERVAL seconds
+      for (let i = 0; i < numKeyframes; i++) {
+        const time = scene.start + (i * KEYFRAME_INTERVAL) + (KEYFRAME_INTERVAL / 2);
+        // Ensure we don't go beyond scene end
+        if (time < scene.end) {
+          keyframeTimes.push(time);
         }
-      } catch (error) {
-        console.error(`Error extracting keyframe for scene ${scene.index}:`, error);
       }
+      
+      // Always include a keyframe near the end if we haven't already
+      if (keyframeTimes.length === 0 || keyframeTimes[keyframeTimes.length - 1] < scene.end - 1) {
+        keyframeTimes.push(scene.end - 0.5); // 0.5s before end
+      }
+
+      console.log(`Scene ${scene.index} is ${sceneDuration.toFixed(1)}s long - extracting ${keyframeTimes.length} keyframes at intervals`);
+
+      // Extract all keyframes in parallel
+      const extractionPromises = keyframeTimes.map(async (time, idx) => {
+        const framePath = path.join(outputDir, `keyframe_${scene.index}_${idx}.jpg`);
+        try {
+          await exec(
+            `ffmpeg -y -ss ${time.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${framePath}"`
+          );
+          if (fs.existsSync(framePath) && fs.statSync(framePath).size > 0) {
+            return framePath;
+          }
+        } catch (error) {
+          console.error(`Error extracting keyframe ${idx} for scene ${scene.index} at ${time.toFixed(1)}s:`, error);
+        }
+        return null;
+      });
+
+      const extractedFrames = await Promise.all(extractionPromises);
+      keyframes.push(...extractedFrames.filter((f): f is string => f !== null));
     } else {
-      // Extract 2 keyframes: one at 1/3 and one at 2/3 of the scene
-      // This provides better coverage for longer scenes
-      const time1 = scene.start + sceneDuration / 3;
-      const time2 = scene.start + (sceneDuration * 2) / 3;
-      
-      const frame1Path = path.join(outputDir, `keyframe_${scene.index}_0.jpg`);
-      const frame2Path = path.join(outputDir, `keyframe_${scene.index}_1.jpg`);
-      
-      try {
-        await Promise.all([
-          exec(`ffmpeg -y -ss ${time1.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${frame1Path}"`),
-          exec(`ffmpeg -y -ss ${time2.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${frame2Path}"`),
-        ]);
+      // For short scenes, use the original 1-2 keyframe strategy
+      if (KEYFRAMES_PER_SCENE === 1) {
+        // Extract middle frame of the scene (most representative)
+        const middleTime = scene.start + sceneDuration / 2;
+        const framePath = path.join(outputDir, `keyframe_${scene.index}_0.jpg`);
         
-        if (fs.existsSync(frame1Path) && fs.statSync(frame1Path).size > 0) {
-          keyframes.push(frame1Path);
+        try {
+          await exec(
+            `ffmpeg -y -ss ${middleTime.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${framePath}"`
+          );
+          
+          if (fs.existsSync(framePath) && fs.statSync(framePath).size > 0) {
+            keyframes.push(framePath);
+          } else {
+            console.warn(`Failed to extract keyframe for scene ${scene.index} at ${middleTime.toFixed(1)}s`);
+          }
+        } catch (error) {
+          console.error(`Error extracting keyframe for scene ${scene.index}:`, error);
         }
-        if (fs.existsSync(frame2Path) && fs.statSync(frame2Path).size > 0) {
-          keyframes.push(frame2Path);
+      } else {
+        // Extract 2 keyframes: one at 1/3 and one at 2/3 of the scene
+        const time1 = scene.start + sceneDuration / 3;
+        const time2 = scene.start + (sceneDuration * 2) / 3;
+        
+        const frame1Path = path.join(outputDir, `keyframe_${scene.index}_0.jpg`);
+        const frame2Path = path.join(outputDir, `keyframe_${scene.index}_1.jpg`);
+        
+        try {
+          await Promise.all([
+            exec(`ffmpeg -y -ss ${time1.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${frame1Path}"`),
+            exec(`ffmpeg -y -ss ${time2.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${frame2Path}"`),
+          ]);
+          
+          if (fs.existsSync(frame1Path) && fs.statSync(frame1Path).size > 0) {
+            keyframes.push(frame1Path);
+          }
+          if (fs.existsSync(frame2Path) && fs.statSync(frame2Path).size > 0) {
+            keyframes.push(frame2Path);
+          }
+        } catch (error) {
+          console.error(`Error extracting keyframes for scene ${scene.index}:`, error);
         }
-      } catch (error) {
-        console.error(`Error extracting keyframes for scene ${scene.index}:`, error);
       }
     }
 
@@ -782,15 +824,15 @@ Style:
         console.log(`Results: `, results.matches);
 
         if (results.matches.length > 0) {
-          return results.matches.map((m) => ({
-            id: m.id || "",
-            score: m.score || 0,
-            text: (m.metadata?.text as string) || "",
-            videoUrl: m.metadata?.videoUrl as string | undefined,
-            startTime: m.metadata?.startTime as string | undefined,
-            endTime: m.metadata?.endTime as string | undefined,
-            collectionName,
-          }));
+        return results.matches.map((m) => ({
+          id: m.id || "",
+          score: m.score || 0,
+          text: (m.metadata?.text as string) || "",
+          videoUrl: m.metadata?.videoUrl as string | undefined,
+          startTime: m.metadata?.startTime as string | undefined,
+          endTime: m.metadata?.endTime as string | undefined,
+          collectionName,
+        }));
         }
 
         return [];
