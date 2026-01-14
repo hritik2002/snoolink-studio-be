@@ -13,7 +13,10 @@ import axios from "axios";
 
 const exec = util.promisify(child_process.exec);
 
-const CHUNK_SIZE_SECONDS = 5;
+const CHUNK_SIZE_SECONDS = 5; // Legacy - kept for fallback
+const SCENE_DETECTION_THRESHOLD = 0.3; // FFmpeg scene detection sensitivity (0.0-1.0, lower = more sensitive)
+const KEYFRAMES_PER_SCENE = 1; // Extract 1-2 keyframes per scene
+const FRAME_SAMPLE_RATE = 1.5; // Sample at 1-2 fps for additional context
 
 // Configure Cloudinary
 cloudinary.config({ ...CONFIG.cloudinary });
@@ -83,34 +86,115 @@ export class VideoProcessingService {
   }
 
   /**
-   * Extract 5-second video chunks
+   * Detect scene changes using FFmpeg scene detection filter
+   * Uses a more reliable approach with scene filter and showinfo
+   * Returns array of scene boundaries in seconds
    */
-  private async extractVideoChunks(
-    videoPath: string,
-    outputDir: string,
-    chunkSize: number = CHUNK_SIZE_SECONDS
-  ): Promise<Array<{ filePath: string; start: number; end: number; index: number }>> {
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
-    }
+  private async detectScenes(videoPath: string): Promise<Array<{ start: number; end: number; index: number }>> {
+    try {
+      // Get video duration first
+      const duration = await this.getVideoDuration(videoPath);
+      console.log(`Analyzing video for scene changes (duration: ${duration.toFixed(1)}s, threshold: ${SCENE_DETECTION_THRESHOLD})...`);
 
+      // Use FFmpeg scene detection - more reliable approach
+      // The scene filter compares consecutive frames and outputs when change exceeds threshold
+      const sceneDetectionOutput = path.join(this.tempDir, `scene_detection_${uuidv4()}.txt`);
+      
+      // Run FFmpeg scene detection - capture stderr which contains showinfo output
+      const { stderr } = await exec(
+        `ffmpeg -i "${videoPath}" -vf "select='gt(scene,${SCENE_DETECTION_THRESHOLD})',showinfo" -vsync 0 -f null - 2>&1 || true`
+      );
+
+      // Parse scene change timestamps from FFmpeg output
+      const sceneChangeTimes: number[] = [0]; // Always start at 0
+      
+      // Extract pts_time from showinfo output
+      // Format: "n:0 pts:12345 pts_time:12.345"
+      const ptsTimeRegex = /pts_time:([\d.]+)/g;
+      let match;
+      
+      while ((match = ptsTimeRegex.exec(stderr)) !== null) {
+        const time = parseFloat(match[1]);
+        if (!isNaN(time) && time > 0 && time < duration) {
+          sceneChangeTimes.push(time);
+        }
+      }
+
+      // Add end time
+      sceneChangeTimes.push(duration);
+      
+      // Remove duplicates and sort
+      const uniqueChanges = [...new Set(sceneChangeTimes)].sort((a, b) => a - b);
+
+      // Create scene segments
+      const scenes: Array<{ start: number; end: number; index: number }> = [];
+      let index = 0;
+      const minSceneDuration = 1.0; // Minimum scene duration in seconds
+
+      for (let i = 0; i < uniqueChanges.length - 1; i++) {
+        const sceneStart = uniqueChanges[i];
+        const sceneEnd = uniqueChanges[i + 1];
+        const sceneDuration = sceneEnd - sceneStart;
+
+        // Only process scenes longer than minimum duration (filter out very short scenes/noise)
+        if (sceneDuration >= minSceneDuration) {
+          scenes.push({
+            start: sceneStart,
+            end: sceneEnd,
+            index: index++,
+          });
+        } else {
+          // Merge very short scenes with previous scene
+          if (scenes.length > 0) {
+            scenes[scenes.length - 1].end = sceneEnd;
+          }
+        }
+      }
+
+      // If no scenes detected or all scenes too short, treat entire video as one scene
+      if (scenes.length === 0) {
+        console.log("No scene changes detected, treating entire video as one scene");
+        scenes.push({
+          start: 0,
+          end: duration,
+          index: 0,
+        });
+      }
+
+      // Calculate reduction percentage
+      const fixedChunksCount = Math.ceil(duration / CHUNK_SIZE_SECONDS);
+      const reduction = fixedChunksCount > 0 
+        ? Math.round((1 - scenes.length / fixedChunksCount) * 100)
+        : 0;
+      
+      const avgSceneDuration = scenes.length > 0 
+        ? (scenes.reduce((sum, s) => sum + (s.end - s.start), 0) / scenes.length).toFixed(1)
+        : duration.toFixed(1);
+
+      console.log(`✅ Detected ${scenes.length} scenes (avg ${avgSceneDuration}s each, ${reduction}% reduction from ${fixedChunksCount} fixed chunks)`);
+      return scenes;
+    } catch (error) {
+      console.error("❌ Scene detection failed, falling back to fixed chunks:", error);
+      // Fallback to fixed chunks if scene detection fails
+      return this.extractVideoChunksLegacy(videoPath);
+    }
+  }
+
+  /**
+   * Legacy: Extract fixed 5-second video chunks (fallback)
+   */
+  private async extractVideoChunksLegacy(
+    videoPath: string
+  ): Promise<Array<{ start: number; end: number; index: number }>> {
     const duration = await this.getVideoDuration(videoPath);
-    const chunks: Array<{ filePath: string; start: number; end: number; index: number }> = [];
+    const chunks: Array<{ start: number; end: number; index: number }> = [];
     let start = 0;
     let index = 0;
 
-    console.log(`Video duration: ${duration} seconds`);
-
     while (start < duration) {
-      const end = Math.min(start + chunkSize, duration);
-      const outputFile = path.join(outputDir, `chunk_${index}.mp4`);
-
-      await exec(
-        `ffmpeg -y -i "${videoPath}" -ss ${start} -t ${chunkSize} -c:v copy -an "${outputFile}"`
-      );
-
-      chunks.push({ filePath: outputFile, start, end, index });
-      start += chunkSize;
+      const end = Math.min(start + CHUNK_SIZE_SECONDS, duration);
+      chunks.push({ start, end, index });
+      start += CHUNK_SIZE_SECONDS;
       index++;
     }
 
@@ -118,27 +202,110 @@ export class VideoProcessingService {
   }
 
   /**
-   * Extract 1 frame per second from a video chunk (5 frames for 5 seconds)
+   * Extract keyframes from a scene
+   * Extracts 1-2 keyframes per scene (typically middle frame + optional frame)
+   * Keyframes are chosen to be most representative of the scene content
    */
-  private async extractFramesFromChunk(
-    chunkPath: string,
+  private async extractKeyframesFromScene(
+    videoPath: string,
+    scene: { start: number; end: number; index: number },
     outputDir: string
   ): Promise<string[]> {
     if (!fs.existsSync(outputDir)) {
       fs.mkdirSync(outputDir, { recursive: true });
     }
 
-    const framePattern = path.join(outputDir, `frame_%02d.jpg`);
+    const sceneDuration = scene.end - scene.start;
+    const keyframes: string[] = [];
 
-    // Extract 1 frame per second (fps=1)
+    // Extract keyframes from scene based on configuration
+    if (KEYFRAMES_PER_SCENE === 1) {
+      // Extract middle frame of the scene (most representative)
+      // Middle frame avoids transition artifacts at scene boundaries
+      const middleTime = scene.start + sceneDuration / 2;
+      const framePath = path.join(outputDir, `keyframe_${scene.index}_0.jpg`);
+      
+      try {
+        // Use -ss before -i for faster seeking (input seeking)
+        await exec(
+          `ffmpeg -y -ss ${middleTime.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${framePath}"`
+        );
+        
+        if (fs.existsSync(framePath) && fs.statSync(framePath).size > 0) {
+          keyframes.push(framePath);
+        } else {
+          console.warn(`Failed to extract keyframe for scene ${scene.index} at ${middleTime.toFixed(1)}s`);
+        }
+      } catch (error) {
+        console.error(`Error extracting keyframe for scene ${scene.index}:`, error);
+      }
+    } else {
+      // Extract 2 keyframes: one at 1/3 and one at 2/3 of the scene
+      // This provides better coverage for longer scenes
+      const time1 = scene.start + sceneDuration / 3;
+      const time2 = scene.start + (sceneDuration * 2) / 3;
+      
+      const frame1Path = path.join(outputDir, `keyframe_${scene.index}_0.jpg`);
+      const frame2Path = path.join(outputDir, `keyframe_${scene.index}_1.jpg`);
+      
+      try {
+        await Promise.all([
+          exec(`ffmpeg -y -ss ${time1.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${frame1Path}"`),
+          exec(`ffmpeg -y -ss ${time2.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${frame2Path}"`),
+        ]);
+        
+        if (fs.existsSync(frame1Path) && fs.statSync(frame1Path).size > 0) {
+          keyframes.push(frame1Path);
+        }
+        if (fs.existsSync(frame2Path) && fs.statSync(frame2Path).size > 0) {
+          keyframes.push(frame2Path);
+        }
+      } catch (error) {
+        console.error(`Error extracting keyframes for scene ${scene.index}:`, error);
+      }
+    }
+
+    // If no keyframes extracted, try extracting at scene start as fallback
+    if (keyframes.length === 0) {
+      const fallbackPath = path.join(outputDir, `keyframe_${scene.index}_fallback.jpg`);
+      try {
+        await exec(
+          `ffmpeg -y -ss ${scene.start.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${fallbackPath}"`
+        );
+        if (fs.existsSync(fallbackPath) && fs.statSync(fallbackPath).size > 0) {
+          keyframes.push(fallbackPath);
+        }
+      } catch (error) {
+        console.error(`Error extracting fallback keyframe for scene ${scene.index}:`, error);
+      }
+    }
+
+    return keyframes;
+  }
+
+  /**
+   * Extract additional context frames at 1-2 fps for the entire video
+   * This provides temporal context without over-sampling
+   */
+  private async extractContextFrames(
+    videoPath: string,
+    outputDir: string
+  ): Promise<string[]> {
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+
+    const framePattern = path.join(outputDir, `context_frame_%04d.jpg`);
+
+    // Extract frames at 1-2 fps for context
     await exec(
-      `ffmpeg -y -i "${chunkPath}" -vf "fps=1,scale=640:360" "${framePattern}"`
+      `ffmpeg -y -i "${videoPath}" -vf "fps=${FRAME_SAMPLE_RATE},scale=640:360" "${framePattern}"`
     );
 
     // Get all extracted frame files, sorted
     const frameFiles = fs
       .readdirSync(outputDir)
-      .filter((f) => f.endsWith(".jpg"))
+      .filter((f) => f.startsWith("context_frame_") && f.endsWith(".jpg"))
       .map((f) => path.join(outputDir, f))
       .sort();
 
@@ -281,49 +448,52 @@ export class VideoProcessingService {
       .map((desc, idx) => `Frame ${idx + 1}: ${desc}`)
       .join("\n\n");
 
-    const prompt = `You are an expert video-understanding system that creates detailed, factual descriptions of video clips optimized for semantic search and vector embeddings.
+    const prompt = `You are an expert video-understanding system that creates detailed, factual descriptions of video scenes optimized for semantic search and vector embeddings.
 
-You are analyzing a 5-second video clip. Below are descriptions of 5 frames (one per second):
+You are analyzing a video scene (a continuous segment with consistent content). Below are descriptions of keyframes extracted from this scene (1-2 representative frames):
 
 ${frameDescriptionsText}
 
 Generate a comprehensive summary in 8-12 information-dense sentences that captures:
 
-1. Temporal progression and motion:
-   - What changes occur between frames (movement, transitions, actions)
-   - Direction and speed of any motion
-   - Continuity or changes in subjects, objects, or scenes
-   - Any actions, gestures, or interactions that develop over time
-
-2. Visual content across all frames:
-   - All visible subjects, objects, and their attributes (colors, shapes, sizes, materials)
-   - Clothing, accessories, physical attributes
+1. Core visual content:
+   - All visible subjects, objects, and their attributes (colors, shapes, sizes, materials, textures)
+   - Clothing, accessories, physical attributes, and distinguishing features
    - Spatial relationships and positioning (foreground/mid-ground/background)
    - Any text, graphics, overlays, or UI elements visible
+   - Composition and visual arrangement
 
-3. Environment and setting:
-   - Location type (indoor/outdoor, room type, landscape, urban)
-   - Lighting conditions and any changes
-   - Background structure and depth
-   - Camera perspective, angle, and any camera movement
+2. Environment and setting:
+   - Location type (indoor/outdoor, room type, landscape, urban, natural environment)
+   - Lighting conditions (natural, artificial, time of day, quality of light)
+   - Background structure, depth, and atmospheric conditions
+   - Weather or environmental conditions if visible
+
+3. Actions and activities:
+   - What is happening in the scene (actions, movements, interactions)
+   - Direction and nature of any motion or activity
+   - Gestures, poses, or body language
+   - Interactions between subjects or with objects
+   - State of activity (active, static, transitional)
 
 4. Visual style and composition:
-   - Overall visual style (realistic, stylized, animated, etc.)
-   - Composition and framing
+   - Overall visual style (realistic, stylized, animated, documentary, cinematic, etc.)
+   - Camera perspective, angle, and framing
    - Any special effects, filters, or visual treatments
+   - Color palette and mood
 
 5. Semantic search categories:
-   - Add 2-3 sentences about object categories, scene types, themes, actions, and use-case categories this video clip represents
-   - Include temporal aspects (e.g., "walking", "transitioning", "static scene")
-   - Base this only on visible content across all frames
+   - Add 2-3 sentences about object categories, scene types, themes, actions, and use-case categories this scene represents
+   - Include relevant keywords that would help someone find this content through search
+   - Base this only on visible content in the keyframes
 
 Style:
-- Use natural, descriptive prose
-- Be specific and detailed about what is visible
-- Describe temporal changes and motion explicitly
-- Do not mention what is NOT in the video
+- Use natural, descriptive prose with rich visual detail
+- Be specific and factual about what is visible
+- Focus on the most distinctive and searchable elements
+- Do not mention what is NOT in the scene
 - Do not speculate about identity, emotions, or intent beyond what's visually apparent
-- Focus on factual visual observations that would help someone find this clip through semantic search`;
+- Prioritize factual visual observations that enable semantic search discovery`;
 
     const startTime = Date.now();
     let requestId: string | undefined;
@@ -402,24 +572,26 @@ Style:
   }
 
   /**
-   * Process a single 5-second chunk
+   * Process a single scene (replaces processChunk)
    */
-  private async processChunk(
-    chunk: { filePath: string; start: number; end: number; index: number },
+  private async processScene(
+    scene: { start: number; end: number; index: number },
     videoUrl: string,
+    videoPath: string,
     tempDir: string,
     vectorDB: VectorDBService,
     userId: string,
     collectionName?: string
   ): Promise<{ chunkId: string; summary: string; start: number; end: number }> {
-    const { filePath: chunkPath, start, end, index } = chunk;
-    // Step 1: Extract frames (1 per second = 5 frames)
-    const framesDir = path.join(tempDir, `frames_${index}`);
-    const frameFiles = await this.extractFramesFromChunk(chunkPath, framesDir);
-    // Step 2: Upload frames to Cloudinary, get descriptions, then delete
+    const { start, end, index } = scene;
+    
+    // Step 1: Extract keyframes from scene (1-2 per scene)
+    const framesDir = path.join(tempDir, `scene_${index}_frames`);
+    const keyframeFiles = await this.extractKeyframesFromScene(videoPath, scene, framesDir);
+    // Step 2: Upload keyframes to Cloudinary, get descriptions, then delete
     const frameDescriptions: string[] = [];
 
-    for (const framePath of frameFiles) {
+    for (const framePath of keyframeFiles) {
       // Upload to Cloudinary
       const { url: frameUrl, publicId } = await this.uploadFrameToCloudinary(framePath);
 
@@ -435,11 +607,11 @@ Style:
       await this.deleteFrameFromCloudinary(publicId);
 
       // Delete local frame file
-        try {
-          fs.unlinkSync(framePath);
-        } catch {
-          // Ignore cleanup errors
-        }
+      try {
+        fs.unlinkSync(framePath);
+      } catch {
+        // Ignore cleanup errors
+      }
     }
 
     // Clean up frames directory
@@ -466,11 +638,11 @@ Style:
       text: summary,
     });
 
-    console.log(`Chunk ${index} indexed successfully`);
+    console.log(`Scene ${index} indexed successfully (${start.toFixed(1)}s - ${end.toFixed(1)}s)`);
 
-    // Clean up chunk file
+    // Clean up frames directory
     try {
-      fs.unlinkSync(chunkPath);
+      fs.rmSync(framesDir, { recursive: true, force: true });
     } catch {
       // Ignore cleanup errors
     }
@@ -514,33 +686,36 @@ Style:
 
       console.log(`Video metadata - Duration: ${duration}s, Resolution: ${resolution}`);
 
-      // Step 2: Extract 5-second chunks
-      const chunksDir = path.join(this.tempDir, uuidv4());
-      const chunks = await this.extractVideoChunks(
-        videoPath,
-        chunksDir,
-        CHUNK_SIZE_SECONDS
-      );
+      // Step 2: Detect scenes using FFmpeg scene detection
+      const scenes = await this.detectScenes(videoPath);
+      console.log(`\nDetected ${scenes.length} scenes (reduced from ~${Math.ceil((duration || 0) / CHUNK_SIZE_SECONDS)} fixed chunks)`);
 
-      console.log(`\nExtracted ${chunks.length} chunks`);
-
-      // Step 3: Process each chunk
+      // Step 3: Process each scene
       const results: Array<{ chunkId: string; summary: string; start: number; end: number }> = [];
+      const tempScenesDir = path.join(this.tempDir, uuidv4());
 
-      for (const chunk of chunks) {
+      for (const scene of scenes) {
         try {
-          const result = await this.processChunk(chunk, videoUrl, chunksDir, vectorDB, userId, collectionName);
+          const result = await this.processScene(
+            scene,
+            videoUrl,
+            videoPath,
+            tempScenesDir,
+            vectorDB,
+            userId,
+            collectionName
+          );
           results.push(result);
         } catch (error) {
-          console.error(`Error processing chunk ${chunk.index}:`, error);
+          console.error(`Error processing scene ${scene.index}:`, error);
         }
       }
 
-      // Clean up chunks directory
+      // Clean up scenes directory
       try {
-        fs.rmSync(chunksDir, { recursive: true, force: true });
+        fs.rmSync(tempScenesDir, { recursive: true, force: true });
       } catch (error) {
-        console.error("Error cleaning up chunks directory:", error);
+        console.error("Error cleaning up scenes directory:", error);
       }
 
       console.log("\n✅ Video indexing complete!");
