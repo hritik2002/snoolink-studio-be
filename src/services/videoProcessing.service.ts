@@ -14,7 +14,7 @@ import axios from "axios";
 const exec = util.promisify(child_process.exec);
 
 const CHUNK_SIZE_SECONDS = 5; // Legacy - kept for fallback
-const SCENE_DETECTION_THRESHOLD = 0.3; // FFmpeg scene detection sensitivity (0.0-1.0, lower = more sensitive)
+const SCENE_DETECTION_THRESHOLD = 0.2; // FFmpeg scene detection sensitivity (0.0-1.0, lower = more sensitive) - lowered for better detection
 const KEYFRAMES_PER_SCENE = 1; // Extract 1-2 keyframes per scene
 const FRAME_SAMPLE_RATE = 1.5; // Sample at 1-2 fps for additional context
 const MAX_SCENE_DURATION = 10; // If scene is longer than this, sample at regular intervals (seconds)
@@ -89,7 +89,7 @@ export class VideoProcessingService {
 
   /**
    * Detect scene changes using FFmpeg scene detection filter
-   * Uses a more reliable approach with scene filter and showinfo
+   * Uses multiple methods for better reliability
    * Returns array of scene boundaries in seconds
    */
   private async detectScenes(videoPath: string): Promise<Array<{ start: number; end: number; index: number }>> {
@@ -98,27 +98,85 @@ export class VideoProcessingService {
       const duration = await this.getVideoDuration(videoPath);
       console.log(`Analyzing video for scene changes (duration: ${duration.toFixed(1)}s, threshold: ${SCENE_DETECTION_THRESHOLD})...`);
 
-      // Use FFmpeg scene detection - more reliable approach
-      // The scene filter compares consecutive frames and outputs when change exceeds threshold
-      const sceneDetectionOutput = path.join(this.tempDir, `scene_detection_${uuidv4()}.txt`);
-      
-      // Run FFmpeg scene detection - capture stderr which contains showinfo output
-      const { stderr } = await exec(
-        `ffmpeg -i "${videoPath}" -vf "select='gt(scene,${SCENE_DETECTION_THRESHOLD})',showinfo" -vsync 0 -f null - 2>&1 || true`
-      );
-
-      // Parse scene change timestamps from FFmpeg output
+      // Method 1: Use FFmpeg scene detection with select filter
+      // This is more reliable and outputs frame timestamps
       const sceneChangeTimes: number[] = [0]; // Always start at 0
       
-      // Extract pts_time from showinfo output
-      // Format: "n:0 pts:12345 pts_time:12.345"
-      const ptsTimeRegex = /pts_time:([\d.]+)/g;
-      let match;
-      
-      while ((match = ptsTimeRegex.exec(stderr)) !== null) {
-        const time = parseFloat(match[1]);
-        if (!isNaN(time) && time > 0 && time < duration) {
-          sceneChangeTimes.push(time);
+      try {
+        // Use scene filter with showinfo to get timestamps
+        // The scene filter outputs when scene change is detected
+        const { stderr } = await exec(
+          `ffmpeg -i "${videoPath}" -vf "select='gt(scene,${SCENE_DETECTION_THRESHOLD})',showinfo" -vsync 0 -f null - 2>&1 || true`
+        );
+
+        // Parse scene change timestamps from FFmpeg output
+        // Look for pts_time in showinfo output
+        const ptsTimeRegex = /pts_time:([\d.]+)/g;
+        let match;
+        
+        while ((match = ptsTimeRegex.exec(stderr)) !== null) {
+          const time = parseFloat(match[1]);
+          if (!isNaN(time) && time > 0 && time < duration) {
+            sceneChangeTimes.push(time);
+          }
+        }
+
+        // Also try alternative parsing - sometimes it's in different format
+        const alternativeRegex = /(?:n:\d+\s+pts:\d+\s+pts_time:([\d.]+)|time:([\d.]+))/g;
+        let altMatch;
+        while ((altMatch = alternativeRegex.exec(stderr)) !== null) {
+          const time = parseFloat(altMatch[1] || altMatch[2]);
+          if (!isNaN(time) && time > 0 && time < duration) {
+            sceneChangeTimes.push(time);
+          }
+        }
+
+        console.log(`Found ${sceneChangeTimes.length - 1} potential scene changes from FFmpeg output`);
+      } catch (error) {
+        console.warn("Error parsing FFmpeg scene detection output:", error);
+      }
+
+      // Method 2: If no scenes found, try using scene filter with different approach
+      if (sceneChangeTimes.length <= 1) {
+        console.log("Trying alternative scene detection method...");
+        try {
+          // Use scene filter with metadata output
+          const { stderr: stderr2 } = await exec(
+            `ffmpeg -i "${videoPath}" -vf "select='gt(scene,${SCENE_DETECTION_THRESHOLD})',metadata=print:file=-" -f null - 2>&1 || true`
+          );
+          
+          // Parse metadata output
+          const metadataRegex = /lavfi\.select\.scene=([\d.]+)/g;
+          let metaMatch;
+          while ((metaMatch = metadataRegex.exec(stderr2)) !== null) {
+            const time = parseFloat(metaMatch[1]);
+            if (!isNaN(time) && time > 0 && time < duration) {
+              sceneChangeTimes.push(time);
+            }
+          }
+        } catch (error) {
+          console.warn("Alternative scene detection method failed:", error);
+        }
+      }
+
+      // Method 3: If still no scenes, use lower threshold as fallback
+      if (sceneChangeTimes.length <= 1 && SCENE_DETECTION_THRESHOLD > 0.15) {
+        console.log("No scenes detected, trying with lower threshold (0.15)...");
+        try {
+          const { stderr: stderr3 } = await exec(
+            `ffmpeg -i "${videoPath}" -vf "select='gt(scene,0.15)',showinfo" -vsync 0 -f null - 2>&1 || true`
+          );
+          
+          const ptsTimeRegex = /pts_time:([\d.]+)/g;
+          let match;
+          while ((match = ptsTimeRegex.exec(stderr3)) !== null) {
+            const time = parseFloat(match[1]);
+            if (!isNaN(time) && time > 0 && time < duration) {
+              sceneChangeTimes.push(time);
+            }
+          }
+        } catch (error) {
+          console.warn("Lower threshold detection failed:", error);
         }
       }
 
@@ -127,18 +185,20 @@ export class VideoProcessingService {
       
       // Remove duplicates and sort
       const uniqueChanges = [...new Set(sceneChangeTimes)].sort((a, b) => a - b);
+      
+      console.log(`Scene change timestamps: ${uniqueChanges.map(t => t.toFixed(1)).join(', ')}`);
 
       // Create scene segments
       const scenes: Array<{ start: number; end: number; index: number }> = [];
       let index = 0;
-      const minSceneDuration = 1.0; // Minimum scene duration in seconds
+      const minSceneDuration = 0.5; // Lowered minimum scene duration to 0.5s
 
       for (let i = 0; i < uniqueChanges.length - 1; i++) {
         const sceneStart = uniqueChanges[i];
         const sceneEnd = uniqueChanges[i + 1];
         const sceneDuration = sceneEnd - sceneStart;
 
-        // Only process scenes longer than minimum duration (filter out very short scenes/noise)
+        // Process scenes longer than minimum duration
         if (sceneDuration >= minSceneDuration) {
           scenes.push({
             start: sceneStart,
@@ -153,14 +213,30 @@ export class VideoProcessingService {
         }
       }
 
-      // If no scenes detected or all scenes too short, treat entire video as one scene
-      if (scenes.length === 0) {
-        console.log("No scene changes detected, treating entire video as one scene");
-        scenes.push({
-          start: 0,
-          end: duration,
-          index: 0,
-        });
+      // If still no scenes detected, force scene breaks at regular intervals
+      // This ensures we don't have one massive scene
+      if (scenes.length === 0 || (scenes.length === 1 && scenes[0].end - scenes[0].start > 15)) {
+        console.log(`⚠️  No scene changes detected or single scene too long (${scenes[0]?.end - scenes[0]?.start || duration}s)`);
+        console.log("Forcing scene breaks at 10-second intervals for better coverage...");
+        
+        // Force scene breaks every 10 seconds
+        const forcedScenes: Array<{ start: number; end: number; index: number }> = [];
+        let forcedStart = 0;
+        let forcedIndex = 0;
+        const forcedInterval = 10; // Force breaks every 10 seconds
+        
+        while (forcedStart < duration) {
+          const forcedEnd = Math.min(forcedStart + forcedInterval, duration);
+          forcedScenes.push({
+            start: forcedStart,
+            end: forcedEnd,
+            index: forcedIndex++,
+          });
+          forcedStart = forcedEnd;
+        }
+        
+        console.log(`✅ Created ${forcedScenes.length} forced scenes (${forcedInterval}s intervals)`);
+        return forcedScenes;
       }
 
       // Calculate reduction percentage
@@ -247,7 +323,7 @@ export class VideoProcessingService {
       const extractionPromises = keyframeTimes.map(async (time, idx) => {
         const framePath = path.join(outputDir, `keyframe_${scene.index}_${idx}.jpg`);
         try {
-          await exec(
+      await exec(
             `ffmpeg -y -ss ${time.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${framePath}"`
           );
           if (fs.existsSync(framePath) && fs.statSync(framePath).size > 0) {
@@ -797,8 +873,8 @@ Style:
     resolution?: string;
     collectionName?: string;
     clips: Array<{
-      id: string;
-      score: number;
+    id: string;
+    score: number;
       startTime: string;
       endTime: string;
     }>;
