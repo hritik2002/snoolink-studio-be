@@ -122,21 +122,28 @@ router.delete("/:name", async (req: Request, res: Response) => {
 
 /**
  * GET /api/collections/:name/resources
- * Get all resources in a collection
+ * Get resources in a collection with pagination
+ * Query params: type, limit, offset
  */
 router.get("/:name/resources", async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
     const collectionName = decodeURIComponent(req.params.name);
     const resourceType = req.query.type as "image" | "video" | undefined;
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+    const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : 0;
 
-    const resources = await supabaseService.getCollectionResources(
+    const result = await supabaseService.getCollectionResourcesPaginated(
       userId,
       collectionName,
-      resourceType
+      {
+        resourceType,
+        limit,
+        offset,
+      }
     );
 
-    return res.json({ success: true, data: resources });
+    return res.json({ success: true, data: result });
   } catch (error: any) {
     console.error("Error fetching collection resources:", error);
     return res.status(500).json({ success: false, error: error.message });

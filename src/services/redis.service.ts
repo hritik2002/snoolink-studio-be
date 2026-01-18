@@ -151,6 +151,7 @@ class RedisService {
     const patterns = [
       `collections:${userId}:${collectionName}:*`,
       `resources:${userId}:${collectionName}:*`,
+      `resources:paginated:${userId}:${collectionName}:*`,
       `collections:${userId}:list`,
     ];
 

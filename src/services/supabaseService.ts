@@ -680,6 +680,85 @@ export class SupabaseService {
   }
 
   /**
+   * Get collection resources with pagination
+   */
+  async getCollectionResourcesPaginated(
+    userId: string,
+    collectionName: string,
+    options: {
+      resourceType?: "image" | "video";
+      limit?: number;
+      offset?: number;
+    } = {}
+  ) {
+    const { resourceType, limit = 20, offset = 0 } = options;
+
+    // Build cache key
+    const cacheKey = `resources:paginated:${userId}:${collectionName}:${resourceType || "all"}:${limit}:${offset}`;
+
+    // Try to get from cache
+    const cached = await redisService.get<any>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    // Count total items
+    let countQuery = this.supabaseClient
+      .from("collections")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("collection_name", collectionName);
+
+    if (resourceType) {
+      countQuery = countQuery.eq("resource_type", resourceType);
+    }
+
+    const { count, error: countError } = await countQuery;
+    if (countError) throw countError;
+
+    // Fetch paginated data
+    let query = this.supabaseClient
+      .from("collections")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("collection_name", collectionName);
+
+    if (resourceType) {
+      query = query.eq("resource_type", resourceType);
+    }
+
+    const { data, error } = await query
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) throw error;
+
+    const items = data.map((resource) => ({
+      id: resource.id,
+      url: resource.resource_url,
+      type: resource.resource_type,
+      description: resource.description,
+      collectionName: resource.collection_name,
+      createdAt: resource.created_at,
+      duration: resource.duration,
+      resolution: resource.resolution,
+    }));
+
+    const result = {
+      items,
+      total: count || 0,
+      hasMore: (offset + limit) < (count || 0),
+      offset,
+      limit,
+    };
+
+    // Cache the result (5 minutes TTL for paginated data)
+    await redisService.set(cacheKey, result, 300);
+
+    return result;
+  }
+
+  /**
    * Move resources to a different collection
    */
   async moveResourcesToCollection(
