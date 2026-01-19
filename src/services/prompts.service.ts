@@ -14,10 +14,8 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "")
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
 
-console.log("ADMIN_EMAILS", ADMIN_EMAILS);
 
 export function isAdmin(email: string | undefined): boolean {
-  console.log("email", email);
   if (!email) return false;
   return ADMIN_EMAILS.includes(email.trim().toLowerCase());
 }
