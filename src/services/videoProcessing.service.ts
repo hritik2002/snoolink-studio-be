@@ -499,8 +499,10 @@ export class VideoProcessingService {
   private async describeFrameWithGPT(
     frameUrl: string,
     userId: string,
-    metadata?: { videoUrl?: string; chunkIndex?: number; collectionName?: string }
+    metadata?: { videoUrl?: string; chunkIndex?: number; collectionName?: string },
+    customPrompt?: string
   ): Promise<string> {
+    const textPrompt = customPrompt || "Describe what's happening in this video frame in plain text. Be detailed and specific.";
     const startTime = Date.now();
     let requestId: string | undefined;
     let success = true;
@@ -515,7 +517,7 @@ export class VideoProcessingService {
             content: [
               {
                 type: "text",
-                text: "Describe what's happening in this video frame in plain text. Be detailed and specific.",
+                text: textPrompt,
               },
               {
                 type: "image_url",
@@ -592,13 +594,16 @@ export class VideoProcessingService {
   private async generateClipSummary(
     frameDescriptions: string[],
     userId: string,
-    metadata?: { videoUrl?: string; chunkIndex?: number; collectionName?: string }
+    metadata?: { videoUrl?: string; chunkIndex?: number; collectionName?: string },
+    customPrompt?: string
   ): Promise<string> {
     const frameDescriptionsText = frameDescriptions
       .map((desc, idx) => `Frame ${idx + 1}: ${desc}`)
       .join("\n\n");
 
-    const prompt = `You are an expert video-understanding system that creates detailed, factual descriptions of video scenes optimized for semantic search and vector embeddings.
+    const prompt = customPrompt
+      ? `${customPrompt}\n\nYou are analyzing a video scene. Below are keyframe descriptions:\n\n${frameDescriptionsText}\n\nGenerate a comprehensive summary in 8-12 information-dense sentences optimized for semantic search.`
+      : `You are an expert video-understanding system that creates detailed, factual descriptions of video scenes optimized for semantic search and vector embeddings.
 
 You are analyzing a video scene (a continuous segment with consistent content). Below are descriptions of keyframes extracted from this scene (1-2 representative frames):
 
@@ -731,7 +736,8 @@ Style:
     tempDir: string,
     vectorDB: VectorDBService,
     userId: string,
-    collectionName?: string
+    collectionName?: string,
+    ingestionPrompt?: string
   ): Promise<{ chunkId: string; summary: string; start: number; end: number }> {
     const { start, end, index } = scene;
     
@@ -750,7 +756,7 @@ Style:
         videoUrl,
         chunkIndex: index,
         collectionName,
-      });
+      }, ingestionPrompt);
       frameDescriptions.push(description);
 
       // Delete from Cloudinary
@@ -776,7 +782,7 @@ Style:
       videoUrl,
       chunkIndex: index,
       collectionName,
-    });
+    }, ingestionPrompt);
     console.log(`Clip summary: ${summary.substring(0, 150)}...`);
 
     // Step 4: Embed and store in vector DB
@@ -806,7 +812,8 @@ Style:
   async processAndIndexVideo(
     videoUrl: string, 
     userId: string,
-    collectionName: string = "Default"
+    collectionName: string = "Default",
+    ingestionPrompt?: string
   ): Promise<{
     videoUrl: string;
     chunksIndexed: number;
@@ -853,7 +860,8 @@ Style:
             tempScenesDir,
             vectorDB,
             userId,
-            collectionName
+            collectionName,
+            ingestionPrompt
           );
           results.push(result);
         } catch (error) {

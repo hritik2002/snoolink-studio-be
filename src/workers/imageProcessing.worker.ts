@@ -55,7 +55,7 @@ class ImageProcessingWorker {
   }
 
   private async processImage(job: Job<ImageJobData>) {
-    const { imageUrl, userId, jobId, collectionName = "Default" } = job.data;
+    const { imageUrl, userId, jobId, collectionName = "Default", ingestionPrompt } = job.data;
 
     try {
       const description = await this.resourceProcessingService.describeImage(
@@ -65,7 +65,8 @@ class ImageProcessingWorker {
           collectionName,
           resourceType: "image",
           endpoint: "image_processing_worker",
-        }
+        },
+        ingestionPrompt
       );
 
       // Embed image in vector database with collection namespace

@@ -26,9 +26,10 @@ export class ResourceProcessingService {
   async describeImage(
     imageUrl: string,
     userId: string,
-    metadata?: { collectionName?: string; resourceType?: string; endpoint?: string }
+    metadata?: { collectionName?: string; resourceType?: string; endpoint?: string },
+    customPrompt?: string
   ): Promise<string> {
-    return this.llmClient.describeImage(imageUrl, userId, metadata);
+    return this.llmClient.describeImage(imageUrl, userId, metadata, customPrompt);
   }
 
   async embedImage({
@@ -138,10 +139,15 @@ export class ResourceProcessingService {
     return mergedResults.slice(0, topK);
   }
 
-  async expandQuery(query: string, userId: string, endpoint?: string): Promise<string> {
+  async expandQuery(
+    query: string,
+    userId: string,
+    endpoint?: string,
+    systemPrompt?: string
+  ): Promise<string> {
     const expanded = await this.llmClient.ask(
       query,
-      EXPAND_QUERY_SYSTEM_PROMPT,
+      systemPrompt || EXPAND_QUERY_SYSTEM_PROMPT,
       userId,
       "query_expansion",
       { endpoint, context: "Query expansion for semantic search" }

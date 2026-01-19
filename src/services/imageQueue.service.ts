@@ -7,6 +7,8 @@ export interface ImageJobData {
   userId: string;
   jobId: string;
   collectionName?: string;
+  /** Custom ingestion prompt from user's selected model; resolved at queue time. */
+  ingestionPrompt?: string;
 }
 
 class ImageQueueService {

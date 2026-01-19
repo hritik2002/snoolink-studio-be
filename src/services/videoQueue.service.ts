@@ -7,6 +7,8 @@ export interface VideoJobData {
   userId: string;
   jobId: string;
   collectionName?: string;
+  /** Custom ingestion prompt from user's selected model; resolved at queue time. */
+  ingestionPrompt?: string;
 }
 
 class VideoQueueService {
@@ -244,9 +246,8 @@ class VideoQueueService {
         if (job) {
           const state = await job.getState();
           if (state === "failed" && job.data) {
-            // Store the video URL and user ID before removing
-            const videoUrl = job.data.videoUrl;
-            const userId = job.data.userId;
+            // Store the video URL, user ID, and options before removing
+            const { videoUrl, userId, collectionName, ingestionPrompt } = job.data;
             
             // Remove the failed job
             await job.remove();
@@ -256,6 +257,8 @@ class VideoQueueService {
               videoUrl,
               userId,
               jobId: uuidv4(), // Generate a new jobId for the re-queued job
+              collectionName,
+              ingestionPrompt,
             });
             
             results.push({

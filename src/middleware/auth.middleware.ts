@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { createClient } from "@supabase/supabase-js";
 import { CONFIG } from "../config";
+import { isAdmin } from "../services/prompts.service";
 
 const supabase = createClient(
   CONFIG.supabase.supabaseUrl,
@@ -87,5 +88,16 @@ export async function optionalAuth(
   } catch (error) {
     next();
   }
+}
+
+/** Must run after authenticateUser. Returns 403 if req.user.email is not in ADMIN_EMAILS. */
+export function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if (!req.user?.email) {
+    return res.status(401).json({ success: false, error: "Unauthorized" });
+  }
+  if (!isAdmin(req.user.email)) {
+    return res.status(403).json({ success: false, error: "Admin access required" });
+  }
+  next();
 }
 

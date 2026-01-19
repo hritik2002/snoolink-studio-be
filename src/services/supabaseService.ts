@@ -393,6 +393,49 @@ export class SupabaseService {
     }
   }
 
+  // ============ User Model Settings (prompt model for search / ingestion) ============
+
+  async getUserModelSettings(userId: string): Promise<{ search_model: string | null; ingestion_model: string | null }> {
+    const { data, error } = await this.supabaseClient
+      .from("user_model_settings")
+      .select("search_model, ingestion_model")
+      .eq("user_id", userId)
+      .single();
+    if (error) {
+      if (error.code === "PGRST116") return { search_model: null, ingestion_model: null };
+      throw error;
+    }
+    return {
+      search_model: data?.search_model || null,
+      ingestion_model: data?.ingestion_model || null,
+    };
+  }
+
+  async upsertUserModelSettings(
+    userId: string,
+    settings: { search_model?: string | null; ingestion_model?: string | null }
+  ): Promise<{ search_model: string | null; ingestion_model: string | null }> {
+    const now = new Date().toISOString();
+    const { data, error } = await this.supabaseClient
+      .from("user_model_settings")
+      .upsert(
+        {
+          user_id: userId,
+          search_model: settings.search_model ?? null,
+          ingestion_model: settings.ingestion_model ?? null,
+          updated_at: now,
+        },
+        { onConflict: "user_id" }
+      )
+      .select("search_model, ingestion_model")
+      .single();
+    if (error) throw error;
+    return {
+      search_model: data?.search_model || null,
+      ingestion_model: data?.ingestion_model || null,
+    };
+  }
+
   // ============ Collection Methods ============
 
   /**

@@ -16,12 +16,14 @@ export class LLMServices {
   async describeImage(
     imageUrl: string,
     userId: string,
-    metadata?: { collectionName?: string; resourceType?: string; endpoint?: string }
+    metadata?: { collectionName?: string; resourceType?: string; endpoint?: string },
+    customPrompt?: string
   ): Promise<string> {
     const startTime = Date.now();
     let requestId: string | undefined;
     let success = true;
     let errorMessage: string | undefined;
+    const textPrompt = customPrompt || DESCRIBE_IMAGE_SYSTEM_PROMPT;
 
     try {
       const response = await this.openaiClient.chat.completions.create({
@@ -32,7 +34,7 @@ export class LLMServices {
             content: [
               {
                 type: "text",
-                text: DESCRIBE_IMAGE_SYSTEM_PROMPT,
+                text: textPrompt,
               },
               {
                 type: "image_url",

@@ -1,6 +1,7 @@
 import { ResourceProcessingService } from "../services/resrouceProcessing.service";
 import { UploadsService } from "../services/uploads.service";
 import { SupabaseService } from "../services/supabaseService";
+import { promptsService } from "../services/prompts.service";
 import { imageQueueService } from "../services/imageQueue.service";
 import { videoQueueService } from "../services/videoQueue.service";
 import { loggingService } from "../services/logging.service";
@@ -147,6 +148,18 @@ class ResourceProcessingController {
     return `search:${type}:${userId}:${queryHash}:${sortedCollections}:${topK}`;
   }
 
+  /** Resolve user's search_model to prompt text. Returns undefined to use default. */
+  private async getSearchPrompt(userId: string): Promise<string | undefined> {
+    try {
+      const s = await this.supabaseService.getUserModelSettings(userId);
+      if (!s.search_model) return undefined;
+      const row = await promptsService.getByModel(s.search_model);
+      return row?.prompt ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   async searchImages(
     query: string,
     userId: string,
@@ -185,10 +198,12 @@ class ResourceProcessingController {
         // Expand queries to match detailed database descriptions
         let expandedQueryResult: string;
         try {
+          const systemPrompt = await this.getSearchPrompt(userId);
           expandedQueryResult = await this.resourceProcessingService.expandQuery(
             `User Query: "${query}"\nExpanded:`,
             userId,
-            endpoint
+            endpoint,
+            systemPrompt
           );
         } catch {
           expandedQueryResult = query; // Fallback to original on error
@@ -312,10 +327,12 @@ class ResourceProcessingController {
         // Expand queries to match detailed database descriptions
         let expandedQueryResult: string;
         try {
+          const systemPrompt = await this.getSearchPrompt(userId);
           expandedQueryResult = await this.resourceProcessingService.expandQuery(
             `User Query: "${query}"\nExpanded:`,
             userId,
-            endpoint
+            endpoint,
+            systemPrompt
           );
         } catch {
           expandedQueryResult = query; // Fallback to original on error
@@ -391,12 +408,24 @@ class ResourceProcessingController {
     userId: string,
     collectionName: string = "Default"
   ): Promise<{ jobId: string; totalImages: number; queuedJobs: string[] }> {
+    let ingestionPrompt: string | undefined;
+    try {
+      const s = await this.supabaseService.getUserModelSettings(userId);
+      if (s.ingestion_model) {
+        const row = await promptsService.getByModel(s.ingestion_model);
+        ingestionPrompt = row?.prompt;
+      }
+    } catch {
+      // ignore; use default
+    }
+
     const jobId = uuidv4();
     const jobs = imageUrls.map((imageUrl) => ({
       imageUrl,
       userId,
       jobId,
       collectionName,
+      ingestionPrompt,
     }));
 
     const queuedJobs = await imageQueueService.addBulkImageJobs(jobs);
@@ -478,12 +507,24 @@ class ResourceProcessingController {
     userId: string,
     collectionName: string = "Default"
   ): Promise<{ jobId: string }> {
+    let ingestionPrompt: string | undefined;
+    try {
+      const s = await this.supabaseService.getUserModelSettings(userId);
+      if (s.ingestion_model) {
+        const row = await promptsService.getByModel(s.ingestion_model);
+        ingestionPrompt = row?.prompt;
+      }
+    } catch {
+      // ignore; use default
+    }
+
     const jobId = uuidv4();
     const job = await videoQueueService.addVideoJob({
       videoUrl,
       userId,
       jobId,
       collectionName,
+      ingestionPrompt,
     });
 
     return {
@@ -568,10 +609,12 @@ class ResourceProcessingController {
         // Expand queries to match detailed database descriptions
         let expandedQueryResult: string;
         try {
+          const systemPrompt = await this.getSearchPrompt(userId);
           expandedQueryResult = await this.resourceProcessingService.expandQuery(
             `User Query: "${query}"\nExpanded:`,
             userId,
-            endpoint
+            endpoint,
+            systemPrompt
           );
         } catch {
           expandedQueryResult = query; // Fallback to original on error

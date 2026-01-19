@@ -7,6 +7,9 @@ import logsRoutes from "./routes/logs.routes.ts";
 import mediaRoutes from "./routes/media.routes.ts";
 import collectionsRoutes from "./routes/collections.routes.ts";
 import costRoutes from "./routes/cost.routes.ts";
+import promptsRoutes from "./routes/prompts.routes.ts";
+import userModelSettingsRoutes from "./routes/user-model-settings.routes.ts";
+import adminRoutes from "./routes/admin.routes.ts";
 import { FILE_SIZE_LIMIT } from "./utils/constants";
 
 const app = express();
@@ -64,6 +67,10 @@ app.use("/api/media", mediaRoutes);
 app.use("/api/collections", collectionsRoutes);
 // Mount cost tracking routes at /api/cost
 app.use("/api/cost", costRoutes);
+// Prompts (list + create) and user model settings
+app.use("/api/prompts", promptsRoutes);
+app.use("/api/user-model-settings", userModelSettingsRoutes);
+app.use("/api/admin", adminRoutes);
 // Mount other routes at /api
 app.use("/api", ...routes);
 
