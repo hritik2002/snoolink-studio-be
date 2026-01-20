@@ -64,27 +64,26 @@ router.post("/upload-images", async (req, res) => {
 });
 
 router.get("/search-images", async (req, res) => {
-  const { query, collection } = req.query;
+  const { query, collection, expandQuery: expandQueryParam } = req.query;
   if (!query || typeof query !== "string" || !query.trim()) {
     return res.status(400).json({ error: "Search query is required" });
   }
-  
-  // Use collection from query param or default to "Default"
+  const expandQuery = expandQueryParam !== "false" && expandQueryParam !== "0";
   const collectionName = (collection as string) || "Default";
-  
   try {
     const results = await resourceProcessingController.searchImages(
       query,
       req.user!.id,
       "/api/media/search-images",
       req.method,
-      collectionName
+      collectionName,
+      expandQuery
     );
     res.json({ success: true, data: results });
   } catch (error: any) {
-    res.status(500).json({ 
-      success: false, 
-      error: error?.message || "Internal server error"
+    res.status(500).json({
+      success: false,
+      error: error?.message || "Internal server error",
     });
   }
 });
@@ -98,53 +97,46 @@ router.get("/search-images", async (req, res) => {
  *   - topK: Number of results (optional, default 10)
  */
 router.get("/search", async (req, res) => {
-  const { query, collections, topK } = req.query;
-  
+  const { query, collections, topK, expandQuery: expandQueryParam } = req.query;
   if (!query || typeof query !== "string" || !query.trim()) {
-    return res.status(400).json({ 
-      success: false, 
-      error: "Search query is required" 
+    return res.status(400).json({
+      success: false,
+      error: "Search query is required",
     });
   }
-
   if (!collections || typeof collections !== "string") {
-    return res.status(400).json({ 
-      success: false, 
-      error: "Collections parameter is required (comma-separated names or 'all')" 
+    return res.status(400).json({
+      success: false,
+      error: "Collections parameter is required (comma-separated names or 'all')",
     });
   }
-
+  const expandQuery = expandQueryParam !== "false" && expandQueryParam !== "0";
   try {
     const userId = req.user!.id;
     let collectionNames: string[];
 
     if (collections.toLowerCase() === "all") {
-      // Fetch all user collections
       const supabaseService = new (await import("../services/supabaseService")).SupabaseService();
       const userCollections = await supabaseService.getCollections(userId);
-      collectionNames = userCollections.map(c => c.name);
-      
+      collectionNames = userCollections.map((c) => c.name);
       if (collectionNames.length === 0) {
-        return res.json({ 
-          success: true, 
-          data: { results: [], expandedQuery: null, collectionsSearched: [] } 
+        return res.json({
+          success: true,
+          data: { results: [], expandedQuery: null, collectionsSearched: [] },
         });
       }
     } else {
-      // Parse comma-separated collection names
-      collectionNames = collections.split(",").map(c => c.trim()).filter(c => c.length > 0);
-      
+      collectionNames = collections.split(",").map((c) => c.trim()).filter((c) => c.length > 0);
       if (collectionNames.length === 0) {
-        return res.status(400).json({ 
-          success: false, 
-          error: "At least one collection name is required" 
+        return res.status(400).json({
+          success: false,
+          error: "At least one collection name is required",
         });
       }
-
       if (collectionNames.length > 3) {
-        return res.status(400).json({ 
-          success: false, 
-          error: "Maximum 3 collections can be searched at once" 
+        return res.status(400).json({
+          success: false,
+          error: "Maximum 3 collections can be searched at once",
         });
       }
     }
@@ -155,13 +147,14 @@ router.get("/search", async (req, res) => {
       collectionNames,
       topK ? parseInt(topK as string, 10) : 10,
       "/api/media/search",
-      req.method
+      req.method,
+      expandQuery
     );
     res.json({ success: true, data: results });
   } catch (error: any) {
-    res.status(500).json({ 
-      success: false, 
-      error: error?.message || "Internal server error"
+    res.status(500).json({
+      success: false,
+      error: error?.message || "Internal server error",
     });
   }
 });
@@ -374,53 +367,46 @@ router.get("/search-videos", async (req, res) => {
  *   - topK: Number of results (optional, default 10)
  */
 router.get("/search-videos-collections", async (req, res) => {
-  const { query, collections, topK } = req.query;
-  
+  const { query, collections, topK, expandQuery: expandQueryParam } = req.query;
   if (!query || typeof query !== "string" || !query.trim()) {
-    return res.status(400).json({ 
-      success: false, 
-      error: "Search query is required" 
+    return res.status(400).json({
+      success: false,
+      error: "Search query is required",
     });
   }
-
   if (!collections || typeof collections !== "string") {
-    return res.status(400).json({ 
-      success: false, 
-      error: "Collections parameter is required (comma-separated names or 'all')" 
+    return res.status(400).json({
+      success: false,
+      error: "Collections parameter is required (comma-separated names or 'all')",
     });
   }
-
+  const expandQuery = expandQueryParam !== "false" && expandQueryParam !== "0";
   try {
     const userId = req.user!.id;
     let collectionNames: string[];
 
     if (collections.toLowerCase() === "all") {
-      // Fetch all user collections
       const supabaseService = new (await import("../services/supabaseService")).SupabaseService();
       const userCollections = await supabaseService.getCollections(userId);
-      collectionNames = userCollections.map(c => c.name);
-      
+      collectionNames = userCollections.map((c) => c.name);
       if (collectionNames.length === 0) {
-        return res.json({ 
-          success: true, 
-          data: { results: [], expandedQuery: null, collectionsSearched: [] } 
+        return res.json({
+          success: true,
+          data: { results: [], expandedQuery: null, collectionsSearched: [] },
         });
       }
     } else {
-      // Parse comma-separated collection names
-      collectionNames = collections.split(",").map(c => c.trim()).filter(c => c.length > 0);
-      
+      collectionNames = collections.split(",").map((c) => c.trim()).filter((c) => c.length > 0);
       if (collectionNames.length === 0) {
-        return res.status(400).json({ 
-          success: false, 
-          error: "At least one collection name is required" 
+        return res.status(400).json({
+          success: false,
+          error: "At least one collection name is required",
         });
       }
-
       if (collectionNames.length > 3) {
-        return res.status(400).json({ 
-          success: false, 
-          error: "Maximum 3 collections can be searched at once" 
+        return res.status(400).json({
+          success: false,
+          error: "Maximum 3 collections can be searched at once",
         });
       }
     }
@@ -431,11 +417,12 @@ router.get("/search-videos-collections", async (req, res) => {
       collectionNames,
       topK ? parseInt(topK as string, 10) : 10,
       "/api/media/search-videos-collections",
-      req.method
+      req.method,
+      expandQuery
     );
     res.json({ success: true, data: results });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: error?.message || "Internal server error" });
   }
 });
 

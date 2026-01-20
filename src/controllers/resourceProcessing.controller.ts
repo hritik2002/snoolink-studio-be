@@ -129,13 +129,15 @@ class ResourceProcessingController {
 
   /**
    * Generate cache key for search queries
+   * @param expandQuery - when false, appends :noexpand so expanded vs raw queries don't share cache
    */
   private getSearchCacheKey(
     userId: string,
     query: string,
     collections: string[],
     topK: number,
-    type: "image" | "video"
+    type: "image" | "video",
+    expandQuery: boolean = true
   ): string {
     // Sort collections to ensure consistent cache key
     const sortedCollections = [...collections].sort().join(",");
@@ -145,7 +147,8 @@ class ResourceProcessingController {
       .update(query.toLowerCase().trim())
       .digest("hex")
       .substring(0, 16);
-    return `search:${type}:${userId}:${queryHash}:${sortedCollections}:${topK}`;
+    const expandSuffix = expandQuery ? "" : ":noexpand";
+    return `search:${type}:${userId}:${queryHash}:${sortedCollections}:${topK}${expandSuffix}`;
   }
 
   /** Resolve user's search_model to prompt text. Returns undefined to use default. */
@@ -165,7 +168,8 @@ class ResourceProcessingController {
     userId: string,
     endpoint: string = "/api/media/search-images",
     method: string = "GET",
-    collectionName: string = "Default" // Accept collection name parameter
+    collectionName: string = "Default",
+    expandQuery: boolean = true
   ) {
     const startTime = Date.now();
     let expandedQuery: string | null = null;
@@ -175,10 +179,11 @@ class ResourceProcessingController {
     // Check cache FIRST with original query (before expansion)
     const cacheKey = this.getSearchCacheKey(
       userId,
-      query, // Use original query for cache key
-      [collectionName], // Use provided collection name
+      query,
+      [collectionName],
       5,
-      "image"
+      "image",
+      expandQuery
     );
 
     // Check for pending request (deduplication)
@@ -195,18 +200,22 @@ class ResourceProcessingController {
     // Create search promise
     const searchPromise = (async () => {
       try {
-        // Expand queries to match detailed database descriptions
+        // Expand queries to match detailed database descriptions (skip when expandQuery is false)
         let expandedQueryResult: string;
-        try {
-          const systemPrompt = await this.getSearchPrompt(userId);
-          expandedQueryResult = await this.resourceProcessingService.expandQuery(
-            `User Query: "${query}"\nExpanded:`,
-            userId,
-            endpoint,
-            systemPrompt
-          );
-        } catch {
-          expandedQueryResult = query; // Fallback to original on error
+        if (expandQuery) {
+          try {
+            const systemPrompt = await this.getSearchPrompt(userId);
+            expandedQueryResult = await this.resourceProcessingService.expandQuery(
+              `User Query: "${query}"\nExpanded:`,
+              userId,
+              endpoint,
+              systemPrompt
+            );
+          } catch {
+            expandedQueryResult = query; // Fallback to original on error
+          }
+        } else {
+          expandedQueryResult = query;
         }
         expandedQuery = expandedQueryResult;
 
@@ -278,6 +287,7 @@ class ResourceProcessingController {
    * @param userId - User ID
    * @param collections - Array of collection names to search in
    * @param topK - Number of results per collection (default 5)
+   * @param expandQuery - If false, skip LLM expansion and search with the raw query (default true)
    */
   async searchMultipleCollections(
     query: string,
@@ -285,7 +295,8 @@ class ResourceProcessingController {
     collections: string[],
     topK: number = 5,
     endpoint: string = "/api/media/search",
-    method: string = "GET"
+    method: string = "GET",
+    expandQuery: boolean = true
   ) {
     // Early return for empty collections
     if (collections.length === 0) {
@@ -304,10 +315,11 @@ class ResourceProcessingController {
     // Check cache FIRST with original query (before expansion)
     const cacheKey = this.getSearchCacheKey(
       userId,
-      query, // Use original query for cache key
+      query,
       collections,
       topK,
-      "image"
+      "image",
+      expandQuery
     );
 
     // Check for pending request (deduplication)
@@ -324,18 +336,22 @@ class ResourceProcessingController {
     // Create search promise
     const searchPromise = (async () => {
       try {
-        // Expand queries to match detailed database descriptions
+        // Expand queries to match detailed database descriptions (skip when expandQuery is false)
         let expandedQueryResult: string;
-        try {
-          const systemPrompt = await this.getSearchPrompt(userId);
-          expandedQueryResult = await this.resourceProcessingService.expandQuery(
-            `User Query: "${query}"\nExpanded:`,
-            userId,
-            endpoint,
-            systemPrompt
-          );
-        } catch {
-          expandedQueryResult = query; // Fallback to original on error
+        if (expandQuery) {
+          try {
+            const systemPrompt = await this.getSearchPrompt(userId);
+            expandedQueryResult = await this.resourceProcessingService.expandQuery(
+              `User Query: "${query}"\nExpanded:`,
+              userId,
+              endpoint,
+              systemPrompt
+            );
+          } catch {
+            expandedQueryResult = query; // Fallback to original on error
+          }
+        } else {
+          expandedQueryResult = query;
         }
         expandedQuery = expandedQueryResult;
 
@@ -560,6 +576,7 @@ class ResourceProcessingController {
 
   /**
    * Search videos across multiple collections
+   * @param expandQuery - If false, skip LLM expansion and search with the raw query (default true)
    */
   async searchVideosMultipleCollections(
     query: string,
@@ -567,7 +584,8 @@ class ResourceProcessingController {
     collections: string[],
     topK: number = 10,
     endpoint: string = "/api/media/search-videos-collections",
-    method: string = "GET"
+    method: string = "GET",
+    expandQuery: boolean = true
   ) {
     // Early return for empty collections
     if (collections.length === 0) {
@@ -586,10 +604,11 @@ class ResourceProcessingController {
     // Check cache FIRST with original query (before expansion)
     const cacheKey = this.getSearchCacheKey(
       userId,
-      query, // Use original query for cache key
+      query,
       collections,
       topK,
-      "video"
+      "video",
+      expandQuery
     );
 
     // Check for pending request (deduplication)
@@ -606,18 +625,22 @@ class ResourceProcessingController {
     // Create search promise
     const searchPromise = (async () => {
       try {
-        // Expand queries to match detailed database descriptions
+        // Expand queries to match detailed database descriptions (skip when expandQuery is false)
         let expandedQueryResult: string;
-        try {
-          const systemPrompt = await this.getSearchPrompt(userId);
-          expandedQueryResult = await this.resourceProcessingService.expandQuery(
-            `User Query: "${query}"\nExpanded:`,
-            userId,
-            endpoint,
-            systemPrompt
-          );
-        } catch {
-          expandedQueryResult = query; // Fallback to original on error
+        if (expandQuery) {
+          try {
+            const systemPrompt = await this.getSearchPrompt(userId);
+            expandedQueryResult = await this.resourceProcessingService.expandQuery(
+              `User Query: "${query}"\nExpanded:`,
+              userId,
+              endpoint,
+              systemPrompt
+            );
+          } catch {
+            expandedQueryResult = query; // Fallback to original on error
+          }
+        } else {
+          expandedQueryResult = query;
         }
         expandedQuery = expandedQueryResult;
 
