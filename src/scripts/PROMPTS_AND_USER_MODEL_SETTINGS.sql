@@ -25,10 +25,12 @@ CREATE POLICY "Authenticated users can read prompts" ON prompts
 -- Insert/Update/Delete are done via backend with admin check; no DB policy (backend uses service role)
 
 -- User model settings: which prompt model to use for search and ingestion per user
+-- min_score: minimum similarity threshold (0–1) for vector search; NULL = use 0.5
 CREATE TABLE IF NOT EXISTS user_model_settings (
   user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   search_model TEXT,
   ingestion_model TEXT,
+  min_score REAL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

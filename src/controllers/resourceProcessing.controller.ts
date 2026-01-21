@@ -130,6 +130,7 @@ class ResourceProcessingController {
   /**
    * Generate cache key for search queries
    * @param expandQuery - when false, appends :noexpand so expanded vs raw queries don't share cache
+   * @param minScore - included so cache varies when user changes min score
    */
   private getSearchCacheKey(
     userId: string,
@@ -137,7 +138,8 @@ class ResourceProcessingController {
     collections: string[],
     topK: number,
     type: "image" | "video",
-    expandQuery: boolean = true
+    expandQuery: boolean = true,
+    minScore: number = 0.5
   ): string {
     // Sort collections to ensure consistent cache key
     const sortedCollections = [...collections].sort().join(",");
@@ -148,18 +150,18 @@ class ResourceProcessingController {
       .digest("hex")
       .substring(0, 16);
     const expandSuffix = expandQuery ? "" : ":noexpand";
-    return `search:${type}:${userId}:${queryHash}:${sortedCollections}:${topK}${expandSuffix}`;
+    return `search:${type}:${userId}:${queryHash}:${sortedCollections}:${topK}${expandSuffix}:m${minScore.toFixed(2)}`;
   }
 
-  /** Resolve user's search_model to prompt text. Returns undefined to use default. */
-  private async getSearchPrompt(userId: string): Promise<string | undefined> {
+  /** User's search settings: prompt for expansion and minScore for vector filtering. */
+  private async getSearchSettings(userId: string): Promise<{ searchPrompt?: string; minScore: number }> {
     try {
       const s = await this.supabaseService.getUserModelSettings(userId);
-      if (!s.search_model) return undefined;
-      const row = await promptsService.getByModel(s.search_model);
-      return row?.prompt ?? undefined;
+      const searchPrompt = s.search_model ? (await promptsService.getByModel(s.search_model))?.prompt ?? undefined : undefined;
+      const minScore = s.min_score != null && !Number.isNaN(s.min_score) ? Math.max(0, Math.min(1, s.min_score)) : 0.5;
+      return { searchPrompt, minScore };
     } catch {
-      return undefined;
+      return { searchPrompt: undefined, minScore: 0.5 };
     }
   }
 
@@ -176,6 +178,7 @@ class ResourceProcessingController {
     let results: any = null;
     let error: string | null = null;
 
+    const searchSettings = await this.getSearchSettings(userId);
     // Check cache FIRST with original query (before expansion)
     const cacheKey = this.getSearchCacheKey(
       userId,
@@ -183,7 +186,8 @@ class ResourceProcessingController {
       [collectionName],
       5,
       "image",
-      expandQuery
+      expandQuery,
+      searchSettings.minScore
     );
 
     // Check for pending request (deduplication)
@@ -204,12 +208,11 @@ class ResourceProcessingController {
         let expandedQueryResult: string;
         if (expandQuery) {
           try {
-            const systemPrompt = await this.getSearchPrompt(userId);
             expandedQueryResult = await this.resourceProcessingService.expandQuery(
               `Expand the following search query:\n\n${query}`,
               userId,
               endpoint,
-              systemPrompt
+              searchSettings.searchPrompt
             );
           } catch {
             expandedQueryResult = query; // Fallback to original on error
@@ -223,6 +226,7 @@ class ResourceProcessingController {
           query: expandedQuery,
           userId,
           collectionName,
+          minScore: searchSettings.minScore,
         });
 
         const response = {

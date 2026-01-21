@@ -395,26 +395,27 @@ export class SupabaseService {
 
   // ============ User Model Settings (prompt model for search / ingestion) ============
 
-  async getUserModelSettings(userId: string): Promise<{ search_model: string | null; ingestion_model: string | null }> {
+  async getUserModelSettings(userId: string): Promise<{ search_model: string | null; ingestion_model: string | null; min_score: number | null }> {
     const { data, error } = await this.supabaseClient
       .from("user_model_settings")
-      .select("search_model, ingestion_model")
+      .select("search_model, ingestion_model, min_score")
       .eq("user_id", userId)
       .single();
     if (error) {
-      if (error.code === "PGRST116") return { search_model: null, ingestion_model: null };
+      if (error.code === "PGRST116") return { search_model: null, ingestion_model: null, min_score: null };
       throw error;
     }
     return {
       search_model: data?.search_model || null,
       ingestion_model: data?.ingestion_model || null,
+      min_score: data?.min_score != null ? Number(data.min_score) : null,
     };
   }
 
   async upsertUserModelSettings(
     userId: string,
-    settings: { search_model?: string | null; ingestion_model?: string | null }
-  ): Promise<{ search_model: string | null; ingestion_model: string | null }> {
+    settings: { search_model?: string | null; ingestion_model?: string | null; min_score?: number | null }
+  ): Promise<{ search_model: string | null; ingestion_model: string | null; min_score: number | null }> {
     const now = new Date().toISOString();
     const { data, error } = await this.supabaseClient
       .from("user_model_settings")
@@ -423,16 +424,18 @@ export class SupabaseService {
           user_id: userId,
           search_model: settings.search_model ?? null,
           ingestion_model: settings.ingestion_model ?? null,
+          min_score: settings.min_score ?? null,
           updated_at: now,
         },
         { onConflict: "user_id" }
       )
-      .select("search_model, ingestion_model")
+      .select("search_model, ingestion_model, min_score")
       .single();
     if (error) throw error;
     return {
       search_model: data?.search_model || null,
       ingestion_model: data?.ingestion_model || null,
+      min_score: data?.min_score != null ? Number(data.min_score) : null,
     };
   }
 
