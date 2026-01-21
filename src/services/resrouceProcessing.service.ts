@@ -77,17 +77,19 @@ export class ResourceProcessingService {
     userId,
     topK = 5,
     collectionName,
+    minScore = 0.5,
   }: {
     query: string;
     userId: string;
     topK?: number;
     collectionName: string;
+    minScore?: number;
   }) {
     try {
       const db = this.getCollectionVectorDB(userId, collectionName);
       
       // VectorDB.query() will generate and cache the embedding
-      const queryResult = await db.query(query, topK, 0.5);
+      const queryResult = await db.query(query, topK, minScore);
       
       const results = queryResult.matches.map((m) => ({
         id: m.id || "",
@@ -111,11 +113,13 @@ export class ResourceProcessingService {
     userId,
     collections,
     topK = 5,
+    minScore = 0.5,
   }: {
     query: string;
     userId: string;
     collections: string[];
     topK?: number;
+    minScore?: number;
   }): Promise<SearchResult[]> {
     if (collections.length === 0) {
       return [];
@@ -126,7 +130,7 @@ export class ResourceProcessingService {
       try {
         const db = this.getCollectionVectorDB(userId, collectionName);
         // VectorDB.query() will generate and cache the embedding
-        const results = await db.query(query, topK, 0.5);
+        const results = await db.query(query, topK, minScore);
 
         if (results.matches.length > 0) {
           return results.matches.map((m) => ({

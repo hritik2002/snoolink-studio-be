@@ -316,6 +316,7 @@ class ResourceProcessingController {
     let results: any = null;
     let error: string | null = null;
 
+    const searchSettings = await this.getSearchSettings(userId);
     // Check cache FIRST with original query (before expansion)
     const cacheKey = this.getSearchCacheKey(
       userId,
@@ -323,7 +324,8 @@ class ResourceProcessingController {
       collections,
       topK,
       "image",
-      expandQuery
+      expandQuery,
+      searchSettings.minScore
     );
 
     // Check for pending request (deduplication)
@@ -344,12 +346,11 @@ class ResourceProcessingController {
         let expandedQueryResult: string;
         if (expandQuery) {
           try {
-            const systemPrompt = await this.getSearchPrompt(userId);
             expandedQueryResult = await this.resourceProcessingService.expandQuery(
               `Expand the following search query:\n\n${query}`,
               userId,
               endpoint,
-              systemPrompt
+              searchSettings.searchPrompt
             );
           } catch {
             expandedQueryResult = query; // Fallback to original on error
@@ -365,6 +366,7 @@ class ResourceProcessingController {
             userId,
             collections,
             topK,
+            minScore: searchSettings.minScore,
           });
 
         const response = {
@@ -605,6 +607,7 @@ class ResourceProcessingController {
     let results: any = null;
     let error: string | null = null;
 
+    const searchSettings = await this.getSearchSettings(userId);
     // Check cache FIRST with original query (before expansion)
     const cacheKey = this.getSearchCacheKey(
       userId,
@@ -612,7 +615,8 @@ class ResourceProcessingController {
       collections,
       topK,
       "video",
-      expandQuery
+      expandQuery,
+      searchSettings.minScore
     );
 
     // Check for pending request (deduplication)
@@ -633,12 +637,11 @@ class ResourceProcessingController {
         let expandedQueryResult: string;
         if (expandQuery) {
           try {
-            const systemPrompt = await this.getSearchPrompt(userId);
             expandedQueryResult = await this.resourceProcessingService.expandQuery(
               `Expand the following search query:\n\n${query}`,
               userId,
               endpoint,
-              systemPrompt
+              searchSettings.searchPrompt
             );
           } catch {
             expandedQueryResult = query; // Fallback to original on error
@@ -653,7 +656,8 @@ class ResourceProcessingController {
             expandedQuery,
             userId,
             collections,
-            topK
+            topK,
+            searchSettings.minScore
           );
 
         const enrichedResults: Record<string, any> = {};

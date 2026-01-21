@@ -890,7 +890,8 @@ Style:
     query: string,
     userId: string,
     collections: string[],
-    topK: number = 5
+    topK: number = 5,
+    minScore: number = 0.5
   ): Promise<Record<string, {
     videoUrl: string;
     videoId?: number;
@@ -920,7 +921,7 @@ Style:
         const vectorDB = new VectorDBService(namespace, userId);
         
         // VectorDB.query() will generate and cache the embedding
-        const results = await vectorDB.query(query, topK, 0.5);
+        const results = await vectorDB.query(query, topK, minScore);
 
 
         console.log(`Results: `, results.matches);
