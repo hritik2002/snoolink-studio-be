@@ -80,8 +80,11 @@ router.get("/search-images", async (req, res) => {
       collectionName,
       expandQuery
     );
-    const resultCount = (results as { results?: unknown[] })?.results?.length ?? 0;
-    analyticsService.track(req.user!.id, "search_completed_image", { result_count: resultCount, collection: collectionName }, "server");
+    const data = results as { results?: unknown[]; expandedQuery?: string | null };
+    const resultCount = data?.results?.length ?? 0;
+    const rawQuery = String(query).trim().slice(0, 2000);
+    const expanded = data.expandedQuery != null ? String(data.expandedQuery).slice(0, 2000) : null;
+    analyticsService.track(req.user!.id, "search_completed_image", { result_count: resultCount, collection: collectionName, user_query: rawQuery, expanded_query: expanded }, "server");
     res.json({ success: true, data: results });
   } catch (error: any) {
     res.status(500).json({
@@ -153,8 +156,11 @@ router.get("/search", async (req, res) => {
       req.method,
       expandQuery
     );
-    const resultCount = (results as { results?: unknown[] })?.results?.length ?? 0;
-    analyticsService.track(userId, "search_completed_multi", { result_count: resultCount, collection_count: collectionNames.length }, "server");
+    const data = results as { results?: unknown[]; expandedQuery?: string | null };
+    const resultCount = data?.results?.length ?? 0;
+    const rawQuery = String(query).trim().slice(0, 2000);
+    const expanded = data.expandedQuery != null ? String(data.expandedQuery).slice(0, 2000) : null;
+    analyticsService.track(userId, "search_completed_multi", { result_count: resultCount, collection_count: collectionNames.length, user_query: rawQuery, expanded_query: expanded }, "server");
     res.json({ success: true, data: results });
   } catch (error: any) {
     res.status(500).json({
@@ -424,8 +430,11 @@ router.get("/search-videos-collections", async (req, res) => {
       req.method,
       expandQuery
     );
-    const videoCount = typeof results === "object" && results !== null ? Object.keys(results).length : 0;
-    analyticsService.track(userId, "search_completed_video", { video_count: videoCount, collection_count: collectionNames.length }, "server");
+    const data = results as { results?: Record<string, unknown>; expandedQuery?: string | null };
+    const videoCount = data?.results && typeof data.results === "object" ? Object.keys(data.results).length : 0;
+    const rawQuery = String(query).trim().slice(0, 2000);
+    const expanded = data.expandedQuery != null ? String(data.expandedQuery).slice(0, 2000) : null;
+    analyticsService.track(userId, "search_completed_video", { video_count: videoCount, collection_count: collectionNames.length, user_query: rawQuery, expanded_query: expanded }, "server");
     res.json({ success: true, data: results });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error?.message || "Internal server error" });

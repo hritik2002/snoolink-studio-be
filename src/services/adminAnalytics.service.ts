@@ -226,6 +226,101 @@ class AdminAnalyticsService {
     return { users, total, hasMore: offset + limit < total };
   }
 
+  /** Paginated list of search queries: user, prompt (user_query), expanded query, type, date. */
+  async getSearchQueries(
+    start?: Date,
+    end?: Date,
+    limit = 50,
+    offset = 0
+  ): Promise<{
+    queries: Array<{
+      userId: string;
+      email?: string | null;
+      name?: string | null;
+      eventName: string;
+      searchType: string;
+      userQuery: string | null;
+      expandedQuery: string | null;
+      createdAt: string;
+      resultCount?: number;
+      collection?: string;
+      collectionCount?: number;
+      videoCount?: number;
+    }>;
+    total: number;
+    hasMore: boolean;
+  }> {
+    const SEARCH_EVENTS = ["search_completed_image", "search_completed_multi", "search_completed_video"];
+    const limit2 = Math.min(Math.max(1, limit), 200);
+    const offset2 = Math.max(0, offset);
+
+    let countQ = this.supabase
+      .from("user_analytics_events")
+      .select("id", { count: "exact", head: true })
+      .in("event_name", SEARCH_EVENTS);
+    if (start) countQ = countQ.gte("created_at", start.toISOString());
+    if (end) countQ = countQ.lte("created_at", end.toISOString());
+    const { count, error: ce } = await countQ;
+    const total = (ce ? 0 : (count ?? 0)) as number;
+
+    let dataQ = this.supabase
+      .from("user_analytics_events")
+      .select("user_id, event_name, created_at, properties")
+      .in("event_name", SEARCH_EVENTS)
+      .order("created_at", { ascending: false })
+      .range(offset2, offset2 + limit2 - 1);
+    if (start) dataQ = dataQ.gte("created_at", start.toISOString());
+    if (end) dataQ = dataQ.lte("created_at", end.toISOString());
+    const { data: rows, error } = await dataQ;
+    if (error) {
+      console.error("[adminAnalytics] getSearchQueries error:", error);
+      return { queries: [], total: 0, hasMore: false };
+    }
+
+    const list = (rows || []) as Array<{ user_id: string; event_name: string; created_at: string; properties?: Record<string, unknown> }>;
+    const userIds = [...new Set(list.map((r) => r.user_id))];
+
+    let profiles: Record<string, { email?: string | null; name?: string | null }> = {};
+    if (userIds.length > 0) {
+      try {
+        const { data: p } = await this.supabase.from("profiles").select("id, email, name").in("id", userIds);
+        if (p && Array.isArray(p)) {
+          p.forEach((r: { id: string; email?: string | null; name?: string | null }) => {
+            profiles[r.id] = { email: r.email ?? null, name: r.name ?? null };
+          });
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const eventToLabel: Record<string, string> = {
+      search_completed_image: "Image",
+      search_completed_multi: "Multi (images)",
+      search_completed_video: "Video",
+    };
+
+    const queries = list.map((r) => {
+      const p = (r.properties || {}) as Record<string, unknown>;
+      return {
+        userId: r.user_id,
+        email: profiles[r.user_id]?.email ?? null,
+        name: profiles[r.user_id]?.name ?? null,
+        eventName: r.event_name,
+        searchType: eventToLabel[r.event_name] || r.event_name,
+        userQuery: (typeof p.user_query === "string" ? p.user_query : null) ?? null,
+        expandedQuery: (typeof p.expanded_query === "string" ? p.expanded_query : null) ?? null,
+        createdAt: r.created_at,
+        resultCount: typeof p.result_count === "number" ? p.result_count : undefined,
+        collection: typeof p.collection === "string" ? p.collection : undefined,
+        collectionCount: typeof p.collection_count === "number" ? p.collection_count : undefined,
+        videoCount: typeof p.video_count === "number" ? p.video_count : undefined,
+      };
+    });
+
+    return { queries, total, hasMore: offset2 + limit2 < total };
+  }
+
   private emptyPlatformOverview() {
     return {
       activeUsers: 0,
