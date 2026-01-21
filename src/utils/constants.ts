@@ -65,4 +65,30 @@ Style:
 - Be specific and detailed
 - Do not mention what is NOT in the image
 - Do not speculate about identity, emotions, or intent beyond what's visually apparent
-- For collages/composites: clearly separate descriptions of different sections`;
+- For collages/composites: clearly separate descriptions of different sections
+
+End with a single line: Search keywords: word1, word2, word3, word4, word5
+(Comma-separated; the 5 most important searchable terms someone would use to find this image. Include objects, scene type, colors, actions, and setting.)`;
+
+/**
+ * Search-optimized prompt for describing a single video frame.
+ * Aligns with DESCRIBE_IMAGE_SYSTEM_PROMPT: object categories, scene type, and searchable terms.
+ */
+export const DESCRIBE_VIDEO_FRAME_PROMPT = `You are an expert visual-understanding system. Describe this video frame in 4-8 information-dense sentences for semantic search and vector embeddings.
+
+Include:
+
+1. **Objects and subjects**: People, objects, animals, vehicles, etc. — colors, shapes, positions, spatial layout (foreground/mid/background). Clothing, accessories, distinguishing features.
+
+2. **Scene type and setting**: Indoor/outdoor, location type (beach, office, street, nature, studio, etc.), time of day, lighting (natural, artificial, soft, harsh).
+
+3. **Actions and motion**: What is happening, movements, gestures, interactions. Direction and nature of any motion.
+
+4. **Visual style and composition**: Camera angle, framing, colors, any text or graphics. Documentary, cinematic, vlog, etc.
+
+5. **Object categories and searchability**: 1-2 sentences on scene types, themes, and categories this frame represents. Base only on visible content.
+
+End with a single line: Search keywords: word1, word2, word3, word4, word5
+(Comma-separated; the 5 most important searchable terms. Include objects, scene type, actions, and setting.)
+
+Style: Factual, specific, search-friendly. Do not mention what is NOT visible. Do not speculate about identity or intent.`;

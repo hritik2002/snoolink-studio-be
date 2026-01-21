@@ -6,14 +6,21 @@ import { CostTrackingService } from "./costTracking.service";
 import { redisService } from "./redis.service";
 import crypto from "crypto";
 
+const EMBEDDING_MODEL = "text-embedding-3-small";
+
+/**
+ * VectorDB uses text-embedding-3-small for all embeddings.
+ * Ensure the Pinecone index is configured with cosine similarity metric
+ * (set in Pinecone dashboard when creating the index).
+ */
 export class VectorDBService {
   private db: Pinecone;
   private openaiClient: OpenAI;
   private namespace: string;
   private costTracker: CostTrackingService;
-  private userId?: string;
+  private userId: string;
 
-  constructor(namespace: string, userId?: string) {
+  constructor(namespace: string, userId: string) {
     this.namespace = namespace;
     this.userId = userId;
     this.db = new Pinecone({
@@ -63,27 +70,12 @@ export class VectorDBService {
       }
     }
 
-    if (!this.userId) {
-      const embedding = await this.openaiClient.embeddings.create({
-        model: "text-embedding-ada-002",
-        input: text,
-      });
-      const result = embedding.data[0].embedding;
-      
-      if (operation === "query") {
-        const cacheKey = `embedding:${this.hashText(text)}`;
-        await redisService.set(cacheKey, result, 86400);
-      }
-      
-      return result;
-    }
-
     const startTime = Date.now();
     let requestId: string | undefined;
 
     try {
       const response = await this.openaiClient.embeddings.create({
-        model: "text-embedding-3-small",
+        model: EMBEDDING_MODEL,
         input: text,
       });
 
@@ -100,7 +92,7 @@ export class VectorDBService {
         {
           userId: this.userId,
           apiType: "embedding",
-          model: "text-embedding-ada-002",
+          model: EMBEDDING_MODEL,
           operationType: "embedding",
           endpoint: operation === "upsert" ? "vector_upsert" : "vector_search",
           context: `${operation === "upsert" ? "Creating" : "Searching"} vector embedding`,
@@ -125,7 +117,7 @@ export class VectorDBService {
         {
           userId: this.userId,
           apiType: "embedding",
-          model: "text-embedding-ada-002",
+          model: EMBEDDING_MODEL,
           operationType: "embedding",
           endpoint: operation === "upsert" ? "vector_upsert" : "vector_search",
           context: `${operation === "upsert" ? "Creating" : "Searching"} vector embedding`,
@@ -210,7 +202,7 @@ export class VectorDBService {
 
     // Filter by minimum score threshold
     const filteredMatches = result.matches.filter(
-      (m) => (m.score || 0) >= 0.009
+      (m) => (m.score || 0) >= minScore
     ).sort((a, b) => (b.score ?? 0) - (a.score ?? 0)); // Sort by score descending
 
     console.log(`\n✅ After filtering (score >= ${minScore}): ${filteredMatches.length} results`);

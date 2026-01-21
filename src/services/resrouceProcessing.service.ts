@@ -3,6 +3,24 @@ import { createCollectionNamespace } from "../utils/namespace";
 import { LLMServices } from "./llm.service";
 import { VectorDBService } from "./vectordb.service";
 
+/**
+ * Parses "Search keywords: w1, w2, ..." from the end of a description.
+ * If present, returns mainDesc (without that line) and embedText (Keywords: ... . mainDesc).
+ * Otherwise returns both as the original description.
+ */
+function parseDescriptionWithKeywords(description: string): { mainDesc: string; embedText: string } {
+  const lines = description.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const last = lines[lines.length - 1] ?? "";
+  const m = last.match(/^Search keywords:\s*(.+)$/i);
+  if (m) {
+    const keywords = m[1].trim();
+    const mainDesc = lines.slice(0, -1).join("\n").trim() || description;
+    const embedText = `Keywords: ${keywords}. ${mainDesc}`;
+    return { mainDesc, embedText };
+  }
+  return { mainDesc: description, embedText: description };
+}
+
 interface SearchResult {
   id: string;
   score: number;
@@ -42,14 +60,15 @@ export class ResourceProcessingService {
     imageUrl: string;
     userId: string;
     collectionName: string;
-  }): Promise<string> {
-    // Use collection-based namespace
+  }): Promise<{ id: string; description: string }> {
+    const { mainDesc, embedText } = parseDescriptionWithKeywords(description);
     const db = this.getCollectionVectorDB(userId, collectionName);
-    const id = await db.upsert(description, {
+    const id = await db.upsert(embedText, {
       imageUrl,
-      description,
+      description: mainDesc,
+      text: mainDesc,
     });
-    return id ?? "";
+    return { id: id ?? "", description: mainDesc };
   }
 
   // Legacy single-namespace search (now uses collection namespace)
@@ -140,24 +159,29 @@ export class ResourceProcessingService {
   }
 
   async expandQuery(
-    query: string,
+    userMessage: string,
     userId: string,
     endpoint?: string,
     systemPrompt?: string
   ): Promise<string> {
     const expanded = await this.llmClient.ask(
-      query,
+      userMessage,
       systemPrompt || EXPAND_QUERY_SYSTEM_PROMPT,
       userId,
       "query_expansion",
       { endpoint, context: "Query expansion for semantic search" }
     );
+    // Strip common prefixes the model may add (e.g. "Expanded: ", "Expanded query: ")
+    const cleaned = expanded.replace(
+      /^(Expanded(?:\s+query)?|Query expansion):\s*/i,
+      ""
+    ).trim();
     
     console.log(`\n🔄 [QUERY EXPANSION]`);
-    console.log(`Original: "${query}"`);
-    console.log(`Expanded: "${expanded}"`);
-    console.log(`Expansion ratio: ${expanded.length / query.length}x\n`);
+    console.log(`Original: "${userMessage.slice(0, 80)}..."`);
+    console.log(`Expanded: "${cleaned}"`);
+    console.log(`Expansion ratio: ${cleaned.length / Math.max(1, userMessage.length)}x\n`);
     
-    return expanded;
+    return cleaned;
   }
 }

@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import { OpenAI } from "openai";
 import { v2 as cloudinary } from "cloudinary";
 import { CONFIG } from "../config";
+import { DESCRIBE_VIDEO_FRAME_PROMPT } from "../utils/constants";
 import { VectorDBService } from "./vectordb.service";
 import { createCollectionNamespace } from "../utils/namespace";
 import { CostTrackingService } from "./costTracking.service";
@@ -15,7 +16,7 @@ const exec = util.promisify(child_process.exec);
 
 const CHUNK_SIZE_SECONDS = 5; // Legacy - kept for fallback
 const SCENE_DETECTION_THRESHOLD = 0.2; // FFmpeg scene detection sensitivity (0.0-1.0, lower = more sensitive) - lowered for better detection
-const KEYFRAMES_PER_SCENE = 1; // Extract 1-2 keyframes per scene
+const KEYFRAMES_PER_SCENE = 2; // Extract 1-2 keyframes per scene
 const FRAME_SAMPLE_RATE = 1.5; // Sample at 1-2 fps for additional context
 const MAX_SCENE_DURATION = 10; // If scene is longer than this, sample at regular intervals (seconds)
 const KEYFRAME_INTERVAL = 5; // Extract keyframe every N seconds for long scenes
@@ -179,37 +180,22 @@ export class VideoProcessingService {
 
       console.log(`Found ${sceneChangeTimes.length - 1} scene changes via frame comparison`);
 
-      // METHOD 3: If SSIM comparison failed or found too few scenes, use histogram comparison
+      // METHOD 3: If SSIM comparison failed or found too few scenes, use deterministic 10-second-boundary rule
       if (sceneChangeTimes.length <= 2 && sortedFrames.length > 2) {
-        console.log("Trying histogram-based scene detection...");
+        console.log("Trying deterministic 10-second-boundary scene detection...");
         
-        for (let i = 0; i < sortedFrames.length - 1; i++) {
-          const frame1 = path.join(tempSceneDir, sortedFrames[i]);
-          const frame2 = path.join(tempSceneDir, sortedFrames[i + 1]);
-          
-          try {
-            // Compare histograms - more robust for gradual changes
-            const { stderr: histStderr } = await exec(
-              `ffmpeg -i "${frame1}" -i "${frame2}" -lavfi "[0:v][1:v]blend=all_mode='difference',histeq" -f null - 2>&1 || true`
-            );
-            
-            // Check if frames are significantly different
-            // This is a heuristic - we look for "high" activity in the blend output
-            const timestamp = (i + 1) / frameSampleRate;
-            if (!sceneChangeTimes.includes(timestamp)) {
-              // Add scene change if not already detected by SSIM
-              const randomCheck = Math.random();
-              // Add roughly 30% of remaining frames as scene changes (heuristic)
-              if (randomCheck < 0.3) {
-                sceneChangeTimes.push(timestamp);
-              }
-            }
-          } catch (histError) {
-            continue;
+        for (let i = 0; i < sortedFrames.length; i++) {
+          const timestamp = (i + 1) / frameSampleRate;
+          const prevTimestamp = i / frameSampleRate;
+          if (
+            Math.floor(timestamp / 10) > Math.floor(prevTimestamp / 10) &&
+            !sceneChangeTimes.includes(timestamp)
+          ) {
+            sceneChangeTimes.push(timestamp);
           }
         }
-        
-        console.log(`Histogram detection added potential scenes, total: ${sceneChangeTimes.length - 1}`);
+        sceneChangeTimes.sort((a, b) => a - b);
+        console.log(`10s-boundary detection added scenes, total: ${sceneChangeTimes.length - 1}`);
       }
 
       // METHOD 4: If still too few scenes, force intelligent breaks
@@ -371,25 +357,7 @@ export class VideoProcessingService {
       keyframes.push(...extractedFrames.filter((f): f is string => f !== null));
     } else {
       // For short scenes, use the original 1-2 keyframe strategy
-      if (KEYFRAMES_PER_SCENE === 1) {
-        // Extract middle frame of the scene (most representative)
-        const middleTime = scene.start + sceneDuration / 2;
-        const framePath = path.join(outputDir, `keyframe_${scene.index}_0.jpg`);
-        
-        try {
-          await exec(
-            `ffmpeg -y -ss ${middleTime.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${framePath}"`
-          );
-          
-          if (fs.existsSync(framePath) && fs.statSync(framePath).size > 0) {
-            keyframes.push(framePath);
-          } else {
-            console.warn(`Failed to extract keyframe for scene ${scene.index} at ${middleTime.toFixed(1)}s`);
-          }
-        } catch (error) {
-          console.error(`Error extracting keyframe for scene ${scene.index}:`, error);
-        }
-      } else {
+      if (KEYFRAMES_PER_SCENE >= 2) {
         // Extract 2 keyframes: one at 1/3 and one at 2/3 of the scene
         const time1 = scene.start + sceneDuration / 3;
         const time2 = scene.start + (sceneDuration * 2) / 3;
@@ -411,6 +379,24 @@ export class VideoProcessingService {
           }
         } catch (error) {
           console.error(`Error extracting keyframes for scene ${scene.index}:`, error);
+        }
+      } else {
+        // Extract middle frame of the scene (most representative)
+        const middleTime = scene.start + sceneDuration / 2;
+        const framePath = path.join(outputDir, `keyframe_${scene.index}_0.jpg`);
+        
+        try {
+          await exec(
+            `ffmpeg -y -ss ${middleTime.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${framePath}"`
+          );
+          
+          if (fs.existsSync(framePath) && fs.statSync(framePath).size > 0) {
+            keyframes.push(framePath);
+          } else {
+            console.warn(`Failed to extract keyframe for scene ${scene.index} at ${middleTime.toFixed(1)}s`);
+          }
+        } catch (error) {
+          console.error(`Error extracting keyframe for scene ${scene.index}:`, error);
         }
       }
     }
@@ -502,7 +488,7 @@ export class VideoProcessingService {
     metadata?: { videoUrl?: string; chunkIndex?: number; collectionName?: string },
     customPrompt?: string
   ): Promise<string> {
-    const textPrompt = customPrompt || "Describe what's happening in this video frame in plain text. Be detailed and specific.";
+    const textPrompt = customPrompt || DESCRIBE_VIDEO_FRAME_PROMPT;
     const startTime = Date.now();
     let requestId: string | undefined;
     let success = true;

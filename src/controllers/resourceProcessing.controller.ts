@@ -37,7 +37,7 @@ class ResourceProcessingController {
           userId,
           { endpoint: "/api/media/upload-image", resourceType: "image" }
         );
-        const id = await this.resourceProcessingService.embedImage({
+        const { id, description: embedDescription } = await this.resourceProcessingService.embedImage({
           description,
           imageUrl: fileUrl,
           userId,
@@ -48,7 +48,7 @@ class ResourceProcessingController {
           success: true,
           data: {
             id,
-            description,
+            description: embedDescription,
             imageUrl: fileUrl,
           },
           error: null,
@@ -206,7 +206,7 @@ class ResourceProcessingController {
           try {
             const systemPrompt = await this.getSearchPrompt(userId);
             expandedQueryResult = await this.resourceProcessingService.expandQuery(
-              `User Query: "${query}"\nExpanded:`,
+              `Expand the following search query:\n\n${query}`,
               userId,
               endpoint,
               systemPrompt
@@ -342,7 +342,7 @@ class ResourceProcessingController {
           try {
             const systemPrompt = await this.getSearchPrompt(userId);
             expandedQueryResult = await this.resourceProcessingService.expandQuery(
-              `User Query: "${query}"\nExpanded:`,
+              `Expand the following search query:\n\n${query}`,
               userId,
               endpoint,
               systemPrompt
@@ -631,7 +631,7 @@ class ResourceProcessingController {
           try {
             const systemPrompt = await this.getSearchPrompt(userId);
             expandedQueryResult = await this.resourceProcessingService.expandQuery(
-              `User Query: "${query}"\nExpanded:`,
+              `Expand the following search query:\n\n${query}`,
               userId,
               endpoint,
               systemPrompt

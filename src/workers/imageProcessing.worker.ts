@@ -70,7 +70,7 @@ class ImageProcessingWorker {
       );
 
       // Embed image in vector database with collection namespace
-      const id = await this.resourceProcessingService.embedImage({
+      const { id, description: embedDescription } = await this.resourceProcessingService.embedImage({
         description,
         imageUrl,
         userId,
@@ -78,7 +78,7 @@ class ImageProcessingWorker {
       });
 
       await this.supabaseService.postImages(
-        [{ id, description, imageUrl }],
+        [{ id, description: embedDescription, imageUrl }],
         userId,
         collectionName
       );
@@ -86,7 +86,7 @@ class ImageProcessingWorker {
       return {
         success: true,
         id,
-        description,
+        description: embedDescription,
         imageUrl,
       };
     } catch (error: any) {
