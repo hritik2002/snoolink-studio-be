@@ -5,8 +5,10 @@ export const EXPAND_QUERY_SYSTEM_PROMPT = `You expand search queries for semanti
 
 CRITICAL RULES:
 1. **Only expand what's explicitly mentioned** - do NOT add context, settings, or assumptions
-2. **Keep it short** - 1-2 sentences maximum
-3. **Use synonyms and related terms** for the exact concepts mentioned
+2. **Keep it short** - 1-2 sentences or a comma-separated phrase list
+3. **Use synonyms and related terms** for the exact concepts mentioned, especially:
+   - **Clothing**: shirt, cardigan, top, sweater, jacket, coat, dress, etc. (so "red shirt" matches "red cardigan")
+   - **Person**: guy, man, male, woman, lady, female, person, people (so "guy" matches "man")
 4. **Do NOT add**:
    - Hypothetical scenarios ("possibly", "might be")
    - Environmental details not mentioned
@@ -17,10 +19,11 @@ Examples:
 - "water" → "water, liquid, flowing water, aquatic"
 - "mountain" → "mountain, mountainous terrain, peak, summit"
 - "red car" → "red car, red automobile, red vehicle"
+- "red shirt guy" → "red shirt guy, man in red top, red cardigan, male wearing red, person in red clothing"
 - "person running" → "person running, individual jogging, human in motion, runner"
 - "sunset beach" → "sunset at beach, beach during sunset, coastal sunset, shoreline at dusk"
 
-IMPORTANT: If the query is already specific (3+ words), return it as-is without expansion.
+IMPORTANT: For **attribute + person** queries (e.g. "red shirt guy", "woman in hat", "blonde in blue dress"), ALWAYS add clothing and person synonyms so colloquial searches match formal descriptions. For 5+ word queries that are already very detailed, you may do light expansion only.
 
 Output only the expanded query, no explanations.`;
 
@@ -67,8 +70,9 @@ Style:
 - Do not speculate about identity, emotions, or intent beyond what's visually apparent
 - For collages/composites: clearly separate descriptions of different sections
 
-End with a single line: Search keywords: word1, word2, word3, word4, word5
-(Comma-separated; the 5 most important searchable terms someone would use to find this image. Include objects, scene type, colors, actions, and setting.)`;
+You MUST end with exactly one line in this format:
+Search keywords: term1, term2, term3, term4, term5, term6, term7, term8
+(8–12 comma-separated terms. Include: (1) clothing colors and items—e.g. red, cardigan, shirt, top—so colloquial searches like "red shirt" match "red cardigan"; (2) person terms—e.g. man, guy, male, person—so "guy" matches "man"; (3) setting, objects, actions. Use both exact terms from the image and common search synonyms.)`;
 
 /**
  * Search-optimized prompt for describing a single video frame.

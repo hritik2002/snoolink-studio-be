@@ -530,7 +530,7 @@ Cost tracking is automatically integrated into:
    - `describeFrameWithGPT()` - Tracks video frame descriptions
    - `generateClipSummary()` - Tracks video summaries
 
-4. **ResourceProcessingService** (`resrouceProcessing.service.ts`)
+4. **ResourceProcessingService** (`resourceProcessing.service.ts`)
    - `expandQuery()` - Tracks query expansion
 
 ## Error Handling

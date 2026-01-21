@@ -1,7 +1,7 @@
 import { Worker, Job } from "bullmq";
 import fs from "fs";
 import { redisService } from "../services/redis.service";
-import { ResourceProcessingService } from "../services/resrouceProcessing.service";
+import { ResourceProcessingService } from "../services/resourceProcessing.service";
 import { UploadsService } from "../services/uploads.service";
 import { SupabaseService } from "../services/supabaseService";
 import { CONFIG } from "../config";

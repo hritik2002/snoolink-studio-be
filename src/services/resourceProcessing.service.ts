@@ -3,6 +3,40 @@ import { createCollectionNamespace } from "../utils/namespace";
 import { LLMServices } from "./llm.service";
 import { VectorDBService } from "./vectordb.service";
 
+/** Synonyms for common query terms so "red shirt guy" matches descriptions with "red cardigan" and "man". */
+const LEXICAL_SYNONYMS: Record<string, string[]> = {
+  shirt: ["cardigan", "top", "sweater", "blouse", "jacket", "tee", "tshirt"],
+  guy: ["man", "male", "person", "boy"],
+  woman: ["lady", "female", "person", "girl"],
+  hat: ["cap", "beanie", "headwear"],
+  dress: ["gown", "outfit"],
+};
+const LEXICAL_BOOST_PER_MATCH = 0.065;
+const LEXICAL_BOOST_CAP = 0.2;
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Boosts score when query terms (or their synonyms) appear in the description text.
+ * Helps short colloquial queries like "red shirt guy" match "man in red cardigan".
+ */
+function computeLexicalBoost(query: string, text: string): number {
+  if (!text || !query) return 0;
+  const t = text.toLowerCase();
+  const words = query.toLowerCase().split(/\s+/).filter((w) => w.length > 1);
+  let boost = 0;
+  for (const w of words) {
+    const syns = LEXICAL_SYNONYMS[w] || [];
+    const toCheck = [w, ...syns];
+    if (toCheck.some((term) => new RegExp(`\\b${escapeRe(term)}\\b`, "i").test(t))) {
+      boost += LEXICAL_BOOST_PER_MATCH;
+    }
+  }
+  return Math.min(LEXICAL_BOOST_CAP, boost);
+}
+
 /**
  * Parses "Search keywords: w1, w2, ..." from the end of a description.
  * If present, returns mainDesc (without that line) and embedText (Keywords: ... . mainDesc).
@@ -67,6 +101,7 @@ export class ResourceProcessingService {
       imageUrl,
       description: mainDesc,
       text: mainDesc,
+      resourceType: "image",
     });
     return { id: id ?? "", description: mainDesc };
   }
@@ -87,15 +122,17 @@ export class ResourceProcessingService {
   }) {
     try {
       const db = this.getCollectionVectorDB(userId, collectionName);
-      
-      // VectorDB.query() will generate and cache the embedding
       const queryResult = await db.query(query, topK, minScore);
-      
-      const results = queryResult.matches.map((m) => ({
-        id: m.id || "",
-        score: m.score || 0,
-        imageUrl: (m.metadata?.imageUrl as string) ?? "",
-      }));
+      const textKey = "text" as const;
+
+      const results = queryResult.matches
+        .map((m) => {
+          const base = m.score || 0;
+          const text = (m.metadata?.[textKey] as string) || "";
+          const boost = computeLexicalBoost(query, text);
+          return { id: m.id || "", score: Math.min(1, base + boost), imageUrl: (m.metadata?.imageUrl as string) ?? "" };
+        })
+        .sort((a, b) => b.score - a.score);
 
       return results;
     } catch {
@@ -125,20 +162,26 @@ export class ResourceProcessingService {
       return [];
     }
 
+    const textKey = "text" as const;
+
     // Create search promises for each collection
     const searchPromises = collections.map(async (collectionName) => {
       try {
         const db = this.getCollectionVectorDB(userId, collectionName);
-        // VectorDB.query() will generate and cache the embedding
         const results = await db.query(query, topK, minScore);
 
         if (results.matches.length > 0) {
-          return results.matches.map((m) => ({
-            id: m.id,
-            score: m.score ?? 0,
-            imageUrl: (m.metadata?.imageUrl as string) ?? "",
-            collectionName,
-          }));
+          return results.matches.map((m) => {
+            const base = m.score ?? 0;
+            const text = (m.metadata?.[textKey] as string) || "";
+            const boost = computeLexicalBoost(query, text);
+            return {
+              id: m.id,
+              score: Math.min(1, base + boost),
+              imageUrl: (m.metadata?.imageUrl as string) ?? "",
+              collectionName,
+            };
+          });
         }
 
         return [];

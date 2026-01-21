@@ -19,7 +19,19 @@ const SCENE_DETECTION_THRESHOLD = 0.2; // FFmpeg scene detection sensitivity (0.
 const KEYFRAMES_PER_SCENE = 2; // Extract 1-2 keyframes per scene
 const FRAME_SAMPLE_RATE = 1.5; // Sample at 1-2 fps for additional context
 const MAX_SCENE_DURATION = 10; // If scene is longer than this, sample at regular intervals (seconds)
-const KEYFRAME_INTERVAL = 5; // Extract keyframe every N seconds for long scenes
+const KEYFRAME_INTERVAL = 4; // Extract keyframe every N seconds for long scenes (finer for moment-level recall)
+
+// --- 95% moment-accuracy: finer temporal indexing ---
+/** Half-window (seconds) around each keyframe for moment-level clips. ±1s => 2s clips. */
+const KEYFRAME_MOMENT_WINDOW_SECONDS = 1;
+/** Emit per-keyframe embeddings (narrow 2s windows) in addition to scene-level. Enables exact-moment retrieval. */
+const EMIT_KEYFRAME_LEVEL_EMBEDDINGS = true;
+/** For long scenes: also emit dense 3–4s segment embeddings (reuses keyframe descriptions). Improves recall for moments between keyframes. */
+const EMIT_DENSE_SEGMENT_EMBEDDINGS = true;
+/** Min scene length (seconds) to emit dense segments. Avoids overlap with keyframe-level for short scenes. */
+const DENSE_SEGMENT_MIN_SCENE_DURATION = 8;
+/** Dense segment length in seconds. Shorter = finer moments, more vectors. */
+const DENSE_SEGMENT_SECONDS = 3;
 
 // Configure Cloudinary
 cloudinary.config({ ...CONFIG.cloudinary });
@@ -298,121 +310,89 @@ export class VideoProcessingService {
   }
 
   /**
-   * Extract keyframes from a scene
-   * For short scenes: extracts 1-2 keyframes (middle or 1/3, 2/3)
-   * For long scenes (>MAX_SCENE_DURATION): samples at regular intervals
-   * Keyframes are chosen to be most representative of the scene content
+   * Extract keyframes from a scene with timestamps for moment-level indexing.
+   * For short scenes: 1-2 keyframes (1/3, 2/3 or middle).
+   * For long scenes (>MAX_SCENE_DURATION): samples every KEYFRAME_INTERVAL seconds.
+   * Returns { path, time }[] so each keyframe can be indexed with precise [start,end] for exact-moment retrieval.
    */
   private async extractKeyframesFromScene(
     videoPath: string,
     scene: { start: number; end: number; index: number },
     outputDir: string
-  ): Promise<string[]> {
+  ): Promise<Array<{ path: string; time: number }>> {
     if (!fs.existsSync(outputDir)) {
       fs.mkdirSync(outputDir, { recursive: true });
     }
 
     const sceneDuration = scene.end - scene.start;
-    const keyframes: string[] = [];
+    const keyframes: Array<{ path: string; time: number }> = [];
 
     // For long scenes, sample at regular intervals instead of just 1-2 keyframes
     if (sceneDuration > MAX_SCENE_DURATION) {
-      // Sample keyframes every KEYFRAME_INTERVAL seconds
       const numKeyframes = Math.ceil(sceneDuration / KEYFRAME_INTERVAL);
       const keyframeTimes: number[] = [];
-      
-      // Start from middle of first interval, then sample every KEYFRAME_INTERVAL seconds
       for (let i = 0; i < numKeyframes; i++) {
         const time = scene.start + (i * KEYFRAME_INTERVAL) + (KEYFRAME_INTERVAL / 2);
-        // Ensure we don't go beyond scene end
-        if (time < scene.end) {
-          keyframeTimes.push(time);
-        }
+        if (time < scene.end) keyframeTimes.push(time);
       }
-      
-      // Always include a keyframe near the end if we haven't already
       if (keyframeTimes.length === 0 || keyframeTimes[keyframeTimes.length - 1] < scene.end - 1) {
-        keyframeTimes.push(scene.end - 0.5); // 0.5s before end
+        keyframeTimes.push(scene.end - 0.5);
       }
-
       console.log(`Scene ${scene.index} is ${sceneDuration.toFixed(1)}s long - extracting ${keyframeTimes.length} keyframes at intervals`);
 
-      // Extract all keyframes in parallel
-      const extractionPromises = keyframeTimes.map(async (time, idx) => {
+      const extractionPromises = keyframeTimes.map(async (t, idx) => {
         const framePath = path.join(outputDir, `keyframe_${scene.index}_${idx}.jpg`);
         try {
-      await exec(
-            `ffmpeg -y -ss ${time.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${framePath}"`
-          );
-          if (fs.existsSync(framePath) && fs.statSync(framePath).size > 0) {
-            return framePath;
-          }
-        } catch (error) {
-          console.error(`Error extracting keyframe ${idx} for scene ${scene.index} at ${time.toFixed(1)}s:`, error);
+          await exec(`ffmpeg -y -ss ${t.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${framePath}"`);
+          if (fs.existsSync(framePath) && fs.statSync(framePath).size > 0) return { path: framePath, time: t };
+        } catch (err) {
+          console.error(`Error extracting keyframe ${idx} for scene ${scene.index} at ${t.toFixed(1)}s:`, err);
         }
         return null;
       });
-
-      const extractedFrames = await Promise.all(extractionPromises);
-      keyframes.push(...extractedFrames.filter((f): f is string => f !== null));
+      const results = await Promise.all(extractionPromises);
+      for (const r of results) if (r) keyframes.push(r);
     } else {
-      // For short scenes, use the original 1-2 keyframe strategy
       if (KEYFRAMES_PER_SCENE >= 2) {
-        // Extract 2 keyframes: one at 1/3 and one at 2/3 of the scene
         const time1 = scene.start + sceneDuration / 3;
         const time2 = scene.start + (sceneDuration * 2) / 3;
-        
         const frame1Path = path.join(outputDir, `keyframe_${scene.index}_0.jpg`);
         const frame2Path = path.join(outputDir, `keyframe_${scene.index}_1.jpg`);
-        
         try {
           await Promise.all([
             exec(`ffmpeg -y -ss ${time1.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${frame1Path}"`),
             exec(`ffmpeg -y -ss ${time2.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${frame2Path}"`),
           ]);
-          
-          if (fs.existsSync(frame1Path) && fs.statSync(frame1Path).size > 0) {
-            keyframes.push(frame1Path);
-          }
-          if (fs.existsSync(frame2Path) && fs.statSync(frame2Path).size > 0) {
-            keyframes.push(frame2Path);
-          }
-        } catch (error) {
-          console.error(`Error extracting keyframes for scene ${scene.index}:`, error);
+          if (fs.existsSync(frame1Path) && fs.statSync(frame1Path).size > 0) keyframes.push({ path: frame1Path, time: time1 });
+          if (fs.existsSync(frame2Path) && fs.statSync(frame2Path).size > 0) keyframes.push({ path: frame2Path, time: time2 });
+        } catch (err) {
+          console.error(`Error extracting keyframes for scene ${scene.index}:`, err);
         }
       } else {
-        // Extract middle frame of the scene (most representative)
         const middleTime = scene.start + sceneDuration / 2;
         const framePath = path.join(outputDir, `keyframe_${scene.index}_0.jpg`);
-        
         try {
-          await exec(
-            `ffmpeg -y -ss ${middleTime.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${framePath}"`
-          );
-          
+          await exec(`ffmpeg -y -ss ${middleTime.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${framePath}"`);
           if (fs.existsSync(framePath) && fs.statSync(framePath).size > 0) {
-            keyframes.push(framePath);
+            keyframes.push({ path: framePath, time: middleTime });
           } else {
             console.warn(`Failed to extract keyframe for scene ${scene.index} at ${middleTime.toFixed(1)}s`);
           }
-        } catch (error) {
-          console.error(`Error extracting keyframe for scene ${scene.index}:`, error);
+        } catch (err) {
+          console.error(`Error extracting keyframe for scene ${scene.index}:`, err);
         }
       }
     }
 
-    // If no keyframes extracted, try extracting at scene start as fallback
     if (keyframes.length === 0) {
       const fallbackPath = path.join(outputDir, `keyframe_${scene.index}_fallback.jpg`);
       try {
-        await exec(
-          `ffmpeg -y -ss ${scene.start.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${fallbackPath}"`
-        );
+        await exec(`ffmpeg -y -ss ${scene.start.toFixed(3)} -i "${videoPath}" -vframes 1 -vf "scale=640:360" -q:v 2 "${fallbackPath}"`);
         if (fs.existsSync(fallbackPath) && fs.statSync(fallbackPath).size > 0) {
-          keyframes.push(fallbackPath);
+          keyframes.push({ path: fallbackPath, time: scene.start });
         }
-      } catch (error) {
-        console.error(`Error extracting fallback keyframe for scene ${scene.index}:`, error);
+      } catch (err) {
+        console.error(`Error extracting fallback keyframe for scene ${scene.index}:`, err);
       }
     }
 
@@ -713,6 +693,32 @@ Style:
   }
 
   /**
+   * Merge overlapping clips for the same video: keep higher-scoring; when scores are within 0.02,
+   * prefer the shorter (more precise) moment. Reduces redundant scene/keyframe/dense overlaps.
+   */
+  private mergeOverlappingClips<T extends { score: number; startTime: string; endTime: string }>(clips: T[]): T[] {
+    if (clips.length <= 1) return clips;
+    const sorted = [...clips].sort((a, b) => {
+      if (Math.abs(b.score - a.score) > 0.02) return b.score - a.score;
+      const durA = parseFloat(a.endTime) - parseFloat(a.startTime);
+      const durB = parseFloat(b.endTime) - parseFloat(b.startTime);
+      return durA - durB; // prefer shorter (= more precise moment)
+    });
+    const kept: T[] = [];
+    for (const c of sorted) {
+      const s = parseFloat(c.startTime);
+      const e = parseFloat(c.endTime);
+      const overlaps = kept.some((k) => {
+        const ks = parseFloat(k.startTime);
+        const ke = parseFloat(k.endTime);
+        return s < ke && e > ks;
+      });
+      if (!overlaps) kept.push(c);
+    }
+    return kept;
+  }
+
+  /**
    * Process a single scene (replaces processChunk)
    */
   private async processScene(
@@ -727,68 +733,89 @@ Style:
   ): Promise<{ chunkId: string; summary: string; start: number; end: number }> {
     const { start, end, index } = scene;
     
-    // Step 1: Extract keyframes from scene (1-2 per scene)
+    // Step 1: Extract keyframes from scene (with timestamps for moment-level indexing)
     const framesDir = path.join(tempDir, `scene_${index}_frames`);
-    const keyframeFiles = await this.extractKeyframesFromScene(videoPath, scene, framesDir);
-    // Step 2: Upload keyframes to Cloudinary, get descriptions, then delete
-    const frameDescriptions: string[] = [];
+    const keyframeData = await this.extractKeyframesFromScene(videoPath, scene, framesDir);
 
-    for (const framePath of keyframeFiles) {
-      // Upload to Cloudinary
-      const { url: frameUrl, publicId } = await this.uploadFrameToCloudinary(framePath);
-
-      // Get GPT description
+    // Step 2: Upload keyframes to Cloudinary, get GPT descriptions, build { desc, time }[]
+    const frameDescriptions: { desc: string; time: number }[] = [];
+    for (const kf of keyframeData) {
+      const { url: frameUrl, publicId } = await this.uploadFrameToCloudinary(kf.path);
       const description = await this.describeFrameWithGPT(frameUrl, userId, {
         videoUrl,
         chunkIndex: index,
         collectionName,
       }, ingestionPrompt);
-      frameDescriptions.push(description);
-
-      // Delete from Cloudinary
+      frameDescriptions.push({ desc: description, time: kf.time });
       await this.deleteFrameFromCloudinary(publicId);
-
-      // Delete local frame file
-      try {
-        fs.unlinkSync(framePath);
-      } catch {
-        // Ignore cleanup errors
-      }
+      try { fs.unlinkSync(kf.path); } catch { /* ignore */ }
     }
 
-    // Clean up frames directory
-    try {
-      fs.rmSync(framesDir, { recursive: true, force: true });
-    } catch (error) {
-      console.error(`Error removing frames directory:`, error);
-    }
+    try { fs.rmSync(framesDir, { recursive: true, force: true }); } catch (e) { console.error(`Error removing frames dir:`, e); }
 
-    // Step 3: Generate summary from frames
-    const summary = await this.generateClipSummary(frameDescriptions, userId, {
-      videoUrl,
-      chunkIndex: index,
-      collectionName,
-    }, ingestionPrompt);
+    // Step 3: Generate scene-level summary from frame descriptions
+    const summary = await this.generateClipSummary(
+      frameDescriptions.map((f) => f.desc),
+      userId,
+      { videoUrl, chunkIndex: index, collectionName },
+      ingestionPrompt
+    );
     console.log(`Clip summary: ${summary.substring(0, 150)}...`);
 
-    // Step 4: Embed and store in vector DB
+    // Step 4: Embed and store — scene-level + optional keyframe-level + optional dense segments
+
+    // 4a) Scene-level embedding (primary chunk for backward compat)
     const chunkId = await vectorDB.upsert(summary, {
       videoUrl,
-      startTime: start.toString(),
-      endTime: end.toString(),
+      startTime: start.toFixed(3),
+      endTime: end.toFixed(3),
       resourceType: "video",
+      segmentType: "scene",
       text: summary,
     });
 
-    console.log(`Scene ${index} indexed successfully (${start.toFixed(1)}s - ${end.toFixed(1)}s)`);
-
-    // Clean up frames directory
-    try {
-      fs.rmSync(framesDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
+    // 4b) Keyframe-level embeddings: ±KEYFRAME_MOMENT_WINDOW_SECONDS around each keyframe for exact-moment retrieval
+    if (EMIT_KEYFRAME_LEVEL_EMBEDDINGS && frameDescriptions.length > 0) {
+      for (const f of frameDescriptions) {
+        const startM = Math.max(start, f.time - KEYFRAME_MOMENT_WINDOW_SECONDS);
+        const endM = Math.min(end, f.time + KEYFRAME_MOMENT_WINDOW_SECONDS);
+        await vectorDB.upsert(f.desc, {
+          videoUrl,
+          startTime: startM.toFixed(3),
+          endTime: endM.toFixed(3),
+          resourceType: "video",
+          segmentType: "keyframe",
+          text: f.desc,
+        });
+      }
     }
 
+    // 4c) Dense segment embeddings: for long scenes, non-overlapping DENSE_SEGMENT_SECONDS windows;
+    //     reuses keyframe descriptions (pick closest by time to segment center). No extra GPT calls.
+    if (EMIT_DENSE_SEGMENT_EMBEDDINGS && (end - start) >= DENSE_SEGMENT_MIN_SCENE_DURATION && frameDescriptions.length > 0) {
+      let segStart = start;
+      while (segStart < end) {
+        const segEnd = Math.min(segStart + DENSE_SEGMENT_SECONDS, end);
+        const center = (segStart + segEnd) / 2;
+        const best = frameDescriptions.reduce((a, b) =>
+          Math.abs(a.time - center) <= Math.abs(b.time - center) ? a : b
+        );
+        await vectorDB.upsert(best.desc, {
+          videoUrl,
+          startTime: segStart.toFixed(3),
+          endTime: segEnd.toFixed(3),
+          resourceType: "video",
+          segmentType: "dense",
+          text: best.desc,
+        });
+        segStart = segEnd;
+      }
+    }
+
+    const parts = ["scene"];
+    if (EMIT_KEYFRAME_LEVEL_EMBEDDINGS) parts.push("keyframe");
+    if (EMIT_DENSE_SEGMENT_EMBEDDINGS && (end - start) >= DENSE_SEGMENT_MIN_SCENE_DURATION) parts.push("dense");
+    console.log(`Scene ${index} indexed (${parts.join("+")}) (${start.toFixed(1)}s - ${end.toFixed(1)}s)`);
     return { chunkId, summary, start, end };
   }
 
@@ -920,8 +947,8 @@ Style:
         const namespace = createCollectionNamespace(userId, collectionName, "video");
         const vectorDB = new VectorDBService(namespace, userId);
         
-        // VectorDB.query() will generate and cache the embedding
-        const results = await vectorDB.query(query, topK, minScore);
+        // Request more vector matches (topK*5) to support moment-level clips (scene+keyframe+dense)
+        const results = await vectorDB.query(query, Math.max(topK * 5, 20), minScore);
 
 
         console.log(`Results: `, results.matches);
@@ -1046,9 +1073,10 @@ Style:
     for (const [videoUrl, group] of groupedByVideo.entries()) {
       const { uniqueClips, ...rest } = group;
       
-      // Sort clips within each group by score (best matches first)
+      // Sort clips by score (best first), then merge overlapping clips to prefer precise moments
       rest.clips.sort((a, b) => b.score - a.score);
-      
+      rest.clips = this.mergeOverlappingClips(rest.clips);
+
       groupedResultsObject[videoUrl] = rest;
     }
 

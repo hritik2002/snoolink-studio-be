@@ -83,6 +83,48 @@ class ImageQueueService {
     };
   }
 
+  /**
+   * Get aggregate state for a batch of image jobs (e.g. from queueImages) by the shared batch jobId.
+   * Use when /job-status/:jobId receives the batch uuid rather than a single Bull job id.
+   */
+  async getJobStateByBatchId(batchJobId: string): Promise<{
+    id: string;
+    state: string;
+    total: number;
+    completed: number;
+    failed: number;
+    inProgress: number;
+    failedReason?: string;
+  } | null> {
+    let completed = 0, failed = 0, active = 0, waiting = 0;
+    let firstFailedReason: string | undefined;
+    const states = ["waiting", "active", "completed", "failed"] as const;
+    for (const s of states) {
+      const jobs = await this.queue.getJobs([s], 0, 999);
+      const matching = jobs.filter((j) => j.data?.jobId === batchJobId);
+      if (s === "completed") completed = matching.length;
+      else if (s === "failed") {
+        failed = matching.length;
+        const withReason = matching.find((j) => j.failedReason);
+        if (withReason) firstFailedReason = withReason.failedReason ?? undefined;
+      } else if (s === "active") active = matching.length;
+      else if (s === "waiting") waiting = matching.length;
+    }
+    const total = completed + failed + active + waiting;
+    if (total === 0) return null;
+    const inProgress = active + waiting;
+    const state = failed > 0 ? "failed" : inProgress > 0 ? "active" : "completed";
+    return {
+      id: batchJobId,
+      state,
+      total,
+      completed,
+      failed,
+      inProgress,
+      failedReason: firstFailedReason,
+    };
+  }
+
   async getJobCounts() {
     return await this.queue.getJobCounts(
       "waiting",

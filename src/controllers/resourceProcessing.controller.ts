@@ -1,4 +1,4 @@
-import { ResourceProcessingService } from "../services/resrouceProcessing.service";
+import { ResourceProcessingService } from "../services/resourceProcessing.service";
 import { UploadsService } from "../services/uploads.service";
 import { SupabaseService } from "../services/supabaseService";
 import { promptsService } from "../services/prompts.service";
@@ -460,13 +460,10 @@ class ResourceProcessingController {
   }
 
   async getJobStatus(jobId: string) {
-    const job = await imageQueueService.getJob(jobId);
-    if (!job) {
-      return null;
-    }
-
     const state = await imageQueueService.getJobState(jobId);
-    return state;
+    if (state) return state;
+    // Job id may be a batch id (from queueImages); resolve aggregate state
+    return imageQueueService.getJobStateByBatchId(jobId);
   }
 
   async getQueueStats() {
