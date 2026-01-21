@@ -10,6 +10,9 @@ import costRoutes from "./routes/cost.routes.ts";
 import promptsRoutes from "./routes/prompts.routes.ts";
 import userModelSettingsRoutes from "./routes/user-model-settings.routes.ts";
 import adminRoutes from "./routes/admin.routes.ts";
+import adminAnalyticsRoutes from "./routes/adminAnalytics.routes.ts";
+import analyticsRoutes from "./routes/analytics.routes.ts";
+import { authenticateUser, requireAdmin } from "./middleware/auth.middleware";
 import { FILE_SIZE_LIMIT } from "./utils/constants";
 
 const app = express();
@@ -71,6 +74,8 @@ app.use("/api/cost", costRoutes);
 app.use("/api/prompts", promptsRoutes);
 app.use("/api/user-model-settings", userModelSettingsRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/admin/analytics", authenticateUser, requireAdmin, adminAnalyticsRoutes);
+app.use("/api/analytics", analyticsRoutes);
 // Mount other routes at /api
 app.use("/api", ...routes);
 

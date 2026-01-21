@@ -2,6 +2,7 @@ import { Router } from "express";
 import fs from "fs";
 import ResourceProcessingController from "../controllers/resourceProcessing.controller.js";
 import { authenticateUser } from "../middleware/auth.middleware.js";
+import { analyticsService } from "../services/analytics.service.js";
 
 const router = Router();
 const resourceProcessingController = new ResourceProcessingController();
@@ -46,13 +47,13 @@ router.get("/resources", async (req, res) => {
 router.post("/upload-images", async (req, res) => {
   try {
     const { urls, collectionName = "Default" } = req.body;
-
+    const arr = Array.isArray(urls) ? urls : [];
     const queueResult = await resourceProcessingController.queueImages(
-      urls as string[],
+      arr,
       req.user!.id,
       collectionName
     );
-
+    analyticsService.track(req.user!.id, "upload_queued", { type: "image", count: arr.length, collectionName }, "server");
     res.json({
       success: true,
       message: "Images queued for processing",
@@ -79,6 +80,8 @@ router.get("/search-images", async (req, res) => {
       collectionName,
       expandQuery
     );
+    const resultCount = (results as { results?: unknown[] })?.results?.length ?? 0;
+    analyticsService.track(req.user!.id, "search_completed_image", { result_count: resultCount, collection: collectionName }, "server");
     res.json({ success: true, data: results });
   } catch (error: any) {
     res.status(500).json({
@@ -150,6 +153,8 @@ router.get("/search", async (req, res) => {
       req.method,
       expandQuery
     );
+    const resultCount = (results as { results?: unknown[] })?.results?.length ?? 0;
+    analyticsService.track(userId, "search_completed_multi", { result_count: resultCount, collection_count: collectionNames.length }, "server");
     res.json({ success: true, data: results });
   } catch (error: any) {
     res.status(500).json({
@@ -310,7 +315,7 @@ router.post("/process-video", async (req, res) => {
       req.user!.id,
       collectionName
     );
-
+    analyticsService.track(req.user!.id, "upload_queued", { type: "video", count: 1, collectionName }, "server");
     res.json({
       success: true,
       message: "Video queued for processing",
@@ -351,7 +356,6 @@ router.get("/search-videos", async (req, res) => {
       req.user!.id,
       topK ? parseInt(topK as string, 10) : 5
     );
-
     res.json({ success: true, data: results });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
@@ -420,6 +424,8 @@ router.get("/search-videos-collections", async (req, res) => {
       req.method,
       expandQuery
     );
+    const videoCount = typeof results === "object" && results !== null ? Object.keys(results).length : 0;
+    analyticsService.track(userId, "search_completed_video", { video_count: videoCount, collection_count: collectionNames.length }, "server");
     res.json({ success: true, data: results });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error?.message || "Internal server error" });

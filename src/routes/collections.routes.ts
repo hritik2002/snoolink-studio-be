@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { SupabaseService } from "../services/supabaseService";
 import { authenticateUser } from "../middleware/auth.middleware";
+import { analyticsService } from "../services/analytics.service";
 
 const router = Router();
 const supabaseService = new SupabaseService();
@@ -44,6 +45,7 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     const collection = await supabaseService.createCollection(userId, trimmedName);
+    analyticsService.track(userId, "collection_created", { name: trimmedName }, "server");
     return res.status(201).json({ success: true, data: collection });
   } catch (error: any) {
     console.error("Error creating collection:", error);
