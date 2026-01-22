@@ -29,6 +29,13 @@ Output only the expanded query, no explanations.`;
 
 export const DESCRIBE_IMAGE_SYSTEM_PROMPT = `You are an expert visual-understanding system that creates detailed, factual descriptions optimized for semantic search and vector embeddings.
 
+CRITICAL STRUCTURE: Start your description with the MOST SEARCHABLE ATTRIBUTES FIRST (colors, clothing, people) before context. This helps vector embeddings prioritize these attributes.
+
+Example good structure:
+"A man in a red cardigan stands outdoors in a scenic mountain landscape. The foreground is dominated by the subject, who is positioned slightly to the right of the frame. Behind him, expansive green fields stretch toward a backdrop of majestic mountains..."
+
+NOT: "This image is a single photograph featuring an individual standing outdoors..." (context first = bad for search)
+
 Describe the image comprehensively in 8-12 information-dense sentences.
 
 CRITICAL: First identify the image type and structure:
@@ -37,11 +44,12 @@ CRITICAL: First identify the image type and structure:
 - If it contains text overlays, graphics, or UI elements: describe them explicitly
 - Note the overall composition structure (grid, overlapping, side-by-side, etc.)
 
-Then describe in detail:
+Then describe in detail (START WITH ATTRIBUTES):
 
-1. All visible subjects and objects:
-   - Colors, shapes, sizes, materials, textures, patterns
-   - Clothing, accessories, hairstyles, physical attributes
+1. **START HERE - All visible subjects and objects (ATTRIBUTES FIRST)**:
+   - **Lead with**: Colors, clothing items, people/objects (e.g., "A man in a red cardigan...")
+   - Then: Shapes, sizes, materials, textures, patterns
+   - Accessories, hairstyles, physical attributes
    - Positions, spatial relationships, foreground/mid-ground/background
    - Partial visibility, occlusions, shadows, reflections
 
@@ -64,6 +72,7 @@ Then describe in detail:
    - Base this only on visible content
 
 Style:
+- **CRITICAL**: Start with attributes (colors, clothing, people) in the first sentence
 - Use natural, descriptive prose
 - Be specific and detailed
 - Do not mention what is NOT in the image
