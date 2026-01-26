@@ -4,7 +4,7 @@ Handles file uploads to the server.
 import fs from "fs";
 import multer from "multer";
 import path from "path";
-import uploadToCloudinary from "./cloudinary.service";
+import uploadToS3 from "./s3.service";
 import { FILE_SIZE_LIMIT } from "../utils/constants";
 
 export class UploadsService {
@@ -64,7 +64,7 @@ export class UploadsService {
     filePath: string,
     resourceType: "image" | "video" = "image"
   ): Promise<{ fileName: string; fileUrl: string }> {
-    const fileUrl = await uploadToCloudinary(filePath, resourceType);
+    const fileUrl = await uploadToS3(filePath, resourceType);
     return {
       fileName: path.basename(filePath),
       fileUrl,

@@ -2,12 +2,12 @@ import fs from "fs";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { OpenAI } from "openai";
-import { v2 as cloudinary } from "cloudinary";
 import { CONFIG } from "../config";
 import { DESCRIBE_VIDEO_FRAME_PROMPT } from "../utils/constants";
 import { VectorDBService } from "./vectordb.service";
 import { createCollectionNamespace } from "../utils/namespace";
 import { CostTrackingService } from "./costTracking.service";
+import uploadToS3, { deleteFromS3, extractS3KeyFromUrl } from "./s3.service";
 import util from "util";
 import child_process from "child_process";
 import axios from "axios";
@@ -32,9 +32,6 @@ const EMIT_DENSE_SEGMENT_EMBEDDINGS = true;
 const DENSE_SEGMENT_MIN_SCENE_DURATION = 8;
 /** Dense segment length in seconds. Shorter = finer moments, more vectors. */
 const DENSE_SEGMENT_SECONDS = 3;
-
-// Configure Cloudinary
-cloudinary.config({ ...CONFIG.cloudinary });
 
 export class VideoProcessingService {
   private openaiClient: OpenAI;
@@ -429,38 +426,35 @@ export class VideoProcessingService {
   }
 
   /**
-   * Upload frame to Cloudinary and get URL
+   * Upload frame to S3 and get URL
    */
-  private async uploadFrameToCloudinary(framePath: string): Promise<{
+  private async uploadFrameToS3(framePath: string): Promise<{
     url: string;
-    publicId: string;
+    key: string;
   }> {
-    const uploadRes = await cloudinary.uploader.upload(framePath, {
-      resource_type: "image",
-    });
+    const url = await uploadToS3(framePath, "image");
+    const key = extractS3KeyFromUrl(url) || "";
 
     return {
-      url: uploadRes.secure_url,
-      publicId: uploadRes.public_id,
+      url,
+      key,
     };
   }
 
   /**
-   * Delete frame from Cloudinary
+   * Delete frame from S3
    */
-  private async deleteFrameFromCloudinary(publicId: string): Promise<void> {
+  private async deleteFrameFromS3(key: string): Promise<void> {
     try {
-      await cloudinary.uploader.destroy(publicId, {
-        resource_type: "image",
-      });
-      console.log(`Deleted frame from Cloudinary: ${publicId}`);
+      await deleteFromS3(key);
+      console.log(`Deleted frame from S3: ${key}`);
     } catch (error) {
-      console.error(`Error deleting frame ${publicId}:`, error);
+      console.error(`Error deleting frame ${key}:`, error);
     }
   }
 
   /**
-   * Get GPT vision description of a frame using Cloudinary URL
+   * Get GPT vision description of a frame using S3 URL
    */
   private async describeFrameWithGPT(
     frameUrl: string,
@@ -737,17 +731,17 @@ Style:
     const framesDir = path.join(tempDir, `scene_${index}_frames`);
     const keyframeData = await this.extractKeyframesFromScene(videoPath, scene, framesDir);
 
-    // Step 2: Upload keyframes to Cloudinary, get GPT descriptions, build { desc, time }[]
+    // Step 2: Upload keyframes to S3, get GPT descriptions, build { desc, time }[]
     const frameDescriptions: { desc: string; time: number }[] = [];
     for (const kf of keyframeData) {
-      const { url: frameUrl, publicId } = await this.uploadFrameToCloudinary(kf.path);
+      const { url: frameUrl, key } = await this.uploadFrameToS3(kf.path);
       const description = await this.describeFrameWithGPT(frameUrl, userId, {
         videoUrl,
         chunkIndex: index,
         collectionName,
       }, ingestionPrompt);
       frameDescriptions.push({ desc: description, time: kf.time });
-      await this.deleteFrameFromCloudinary(publicId);
+      await this.deleteFrameFromS3(key);
       try { fs.unlinkSync(kf.path); } catch { /* ignore */ }
     }
 
