@@ -189,3 +189,19 @@ export async function getImageBufferFromS3Url(url: string): Promise<Buffer | nul
     throw new Error(`Failed to fetch image from S3: ${err instanceof Error ? err.message : "Unknown error"}`);
   }
 }
+
+/**
+ * If the URL is our S3 or CDN, fetch the object via S3 GetObject (backend IAM).
+ * Use this for server-side access so CloudFront 403 (signed URLs / referer) is avoided.
+ */
+export async function getBufferFromOurUrl(url: string): Promise<Buffer | null> {
+  if (!isOurS3Url(url)) return null;
+  const key = extractS3KeyFromUrl(url);
+  if (!key) return null;
+  try {
+    return await getObjectAsBuffer(key);
+  } catch (err) {
+    console.error("S3 getObject error for URL:", err);
+    throw new Error(`Failed to fetch from S3: ${err instanceof Error ? err.message : "Unknown error"}`);
+  }
+}

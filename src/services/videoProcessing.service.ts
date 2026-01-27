@@ -7,7 +7,7 @@ import { DESCRIBE_VIDEO_FRAME_PROMPT } from "../utils/constants";
 import { VectorDBService } from "./vectordb.service";
 import { createCollectionNamespace } from "../utils/namespace";
 import { CostTrackingService } from "./costTracking.service";
-import uploadToS3, { deleteFromS3, extractS3KeyFromUrl } from "./s3.service";
+import uploadToS3, { deleteFromS3, extractS3KeyFromUrl, getBufferFromOurUrl } from "./s3.service";
 import util from "util";
 import child_process from "child_process";
 import axios from "axios";
@@ -51,10 +51,17 @@ export class VideoProcessingService {
   }
 
   /**
-   * Download video from URL to temporary file
+   * Download video from URL to temporary file.
+   * For our S3/CDN URLs, fetches via S3 GetObject (backend IAM) to avoid CloudFront 403.
    */
   private async downloadVideo(videoUrl: string): Promise<string> {
     const videoPath = path.join(this.tempDir, `video_${uuidv4()}.mp4`);
+
+    const ourBuffer = await getBufferFromOurUrl(videoUrl);
+    if (ourBuffer !== null) {
+      await fs.promises.writeFile(videoPath, ourBuffer);
+      return videoPath;
+    }
 
     const response = await axios({
       url: videoUrl,
