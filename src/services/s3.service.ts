@@ -27,15 +27,9 @@ export default async function uploadToS3(
     const fileBuffer = fs.readFileSync(filePath);
     const fileName = path.basename(filePath);
     const timestamp = Date.now();
-    const random = crypto.randomBytes(8).toString("hex");
-    const sanitizedName = fileName
-      .replace(/\.[^/.]+$/, "") // remove extension
-      .replace(/[^a-zA-Z0-9\s\-_]/g, "") // remove special chars
-      .replace(/\s+/g, "_") // replace spaces with underscore
-      .substring(0, 50);
-    
-    const extension = path.extname(fileName);
-    const key = `snoolink-studio/${resourceType}s/${timestamp}_${random}_${sanitizedName}${extension}`;
+    const randomId = crypto.randomBytes(12).toString("hex");
+    const extension = path.extname(fileName) || (resourceType === "image" ? ".png" : ".mp4");
+    const key = `snoolink-studio/${resourceType}s/${timestamp}_${randomId}${extension}`;
 
     const command = new PutObjectCommand({
       Bucket: CONFIG.s3.bucketName,
