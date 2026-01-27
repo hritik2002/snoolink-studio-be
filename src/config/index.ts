@@ -40,6 +40,8 @@ export const CONFIG = {
     region: process.env.S3_REGION || "us-east-1",
     accessKeyId: process.env.S3_ACCESS_KEY_ID || "",
     secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || "",
+    /** If set, public URLs use this base (e.g. https://cdn.snoolink.com) instead of S3. */
+    publicBaseUrl: process.env.CDN_URL?.replace(/\/$/, "") || null,
   },
   vectordb: {
     type: "chroma",

@@ -46,9 +46,11 @@ export default async function uploadToS3(
 
     await s3Client.send(command);
 
-    // Return public URL
-    const publicUrl = `https://${CONFIG.s3.bucketName}.s3.${CONFIG.s3.region}.amazonaws.com/${key}`;
-    return publicUrl;
+    // Return public URL (CDN if configured, else direct S3)
+    const base =
+      CONFIG.s3.publicBaseUrl ||
+      `https://${CONFIG.s3.bucketName}.s3.${CONFIG.s3.region}.amazonaws.com`;
+    return `${base}/${key}`;
   } catch (err) {
     console.error("S3 upload error:", err);
     throw new Error(`Failed to upload ${resourceType} to S3: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -140,15 +142,21 @@ export function extractS3KeyFromUrl(url: string): string | null {
 }
 
 /**
- * Check if a URL is our S3 bucket URL (virtual-hosted or path-style)
+ * Check if a URL is our S3 bucket URL (virtual-hosted, path-style, or CDN)
  */
 export function isOurS3Url(url: string): boolean {
-  if (!CONFIG.s3.bucketName || !url?.startsWith("http")) return false;
+  if (!url?.startsWith("http")) return false;
   try {
     const u = new URL(url);
-    const virtualHosted = u.hostname === `${CONFIG.s3.bucketName}.s3.${CONFIG.s3.region}.amazonaws.com`;
-    const pathStyle = u.hostname === `s3.${CONFIG.s3.region}.amazonaws.com` && u.pathname.startsWith(`/${CONFIG.s3.bucketName}/`);
-    return virtualHosted || pathStyle;
+    const virtualHosted =
+      CONFIG.s3.bucketName &&
+      u.hostname === `${CONFIG.s3.bucketName}.s3.${CONFIG.s3.region}.amazonaws.com`;
+    const pathStyle =
+      u.hostname === `s3.${CONFIG.s3.region}.amazonaws.com` &&
+      u.pathname.startsWith(`/${CONFIG.s3.bucketName}/`);
+    const cdnHost = CONFIG.s3.publicBaseUrl ? new URL(CONFIG.s3.publicBaseUrl).hostname : null;
+    const isCdn = cdnHost && u.hostname === cdnHost;
+    return !!(virtualHosted || pathStyle || isCdn);
   } catch {
     return false;
   }
