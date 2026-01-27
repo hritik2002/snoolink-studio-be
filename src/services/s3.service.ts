@@ -29,7 +29,7 @@ export default async function uploadToS3(
     const timestamp = Date.now();
     const randomId = crypto.randomBytes(12).toString("hex");
     const extension = path.extname(fileName) || (resourceType === "image" ? ".png" : ".mp4");
-    const key = `snoolink-studio/${resourceType}s/${timestamp}_${randomId}${extension}`;
+    const key = `snoolink-studio/${timestamp}_${randomId}${extension}`;
 
     const command = new PutObjectCommand({
       Bucket: CONFIG.s3.bucketName,
