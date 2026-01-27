@@ -1,6 +1,7 @@
 import { OpenAI } from "openai";
 import { DESCRIBE_IMAGE_SYSTEM_PROMPT } from "../utils/constants";
 import { CostTrackingService } from "./costTracking.service";
+import { getImageBufferFromS3Url } from "./s3.service";
 
 export class LLMServices {
   private openaiClient: OpenAI;
@@ -26,6 +27,14 @@ export class LLMServices {
     const textPrompt = customPrompt || DESCRIBE_IMAGE_SYSTEM_PROMPT;
 
     try {
+      // For S3 URLs, fetch via backend credentials and pass as base64 so OpenAI can use it
+      // (avoids 400/403 when bucket is private or URL is not publicly reachable)
+      let urlForOpenAI = imageUrl;
+      const s3Buffer = await getImageBufferFromS3Url(imageUrl);
+      if (s3Buffer) {
+        urlForOpenAI = `data:image/png;base64,${s3Buffer.toString("base64")}`;
+      }
+
       const response = await this.openaiClient.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
@@ -39,7 +48,7 @@ export class LLMServices {
               {
                 type: "image_url",
                 image_url: {
-                  url: imageUrl,
+                  url: urlForOpenAI,
                 },
               },
             ],

@@ -138,3 +138,52 @@ export function extractS3KeyFromUrl(url: string): string | null {
     return null;
   }
 }
+
+/**
+ * Check if a URL is our S3 bucket URL (virtual-hosted or path-style)
+ */
+export function isOurS3Url(url: string): boolean {
+  if (!CONFIG.s3.bucketName || !url?.startsWith("http")) return false;
+  try {
+    const u = new URL(url);
+    const virtualHosted = u.hostname === `${CONFIG.s3.bucketName}.s3.${CONFIG.s3.region}.amazonaws.com`;
+    const pathStyle = u.hostname === `s3.${CONFIG.s3.region}.amazonaws.com` && u.pathname.startsWith(`/${CONFIG.s3.bucketName}/`);
+    return virtualHosted || pathStyle;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Fetch an S3 object as a Buffer (uses backend credentials).
+ * Use this when OpenAI or other services cannot access the bucket directly (e.g. private bucket).
+ */
+export async function getObjectAsBuffer(key: string): Promise<Buffer> {
+  const command = new GetObjectCommand({
+    Bucket: CONFIG.s3.bucketName,
+    Key: key,
+  });
+  const response = await s3Client.send(command);
+  const body = response.Body;
+  if (!body) throw new Error("Empty S3 object body");
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of body as AsyncIterable<Uint8Array>) {
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+/**
+ * If the URL is our S3 bucket, fetch the object and return its buffer; otherwise return null.
+ */
+export async function getImageBufferFromS3Url(url: string): Promise<Buffer | null> {
+  if (!isOurS3Url(url)) return null;
+  const key = extractS3KeyFromUrl(url);
+  if (!key) return null;
+  try {
+    return await getObjectAsBuffer(key);
+  } catch (err) {
+    console.error("S3 getObject error for image description:", err);
+    throw new Error(`Failed to fetch image from S3: ${err instanceof Error ? err.message : "Unknown error"}`);
+  }
+}
