@@ -1,5 +1,5 @@
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import { CONFIG } from "../config";
+import { SupabaseClient } from "@supabase/supabase-js";
+import { createSupabaseClient } from "../lib/supabase.client";
 
 export interface LogEntry {
   user_id: string;
@@ -17,10 +17,7 @@ export class LoggingService {
   private supabaseClient: SupabaseClient;
 
   constructor() {
-    this.supabaseClient = createClient(
-      CONFIG.supabase.supabaseUrl,
-      CONFIG.supabase.supabaseKey
-    );
+    this.supabaseClient = createSupabaseClient();
   }
 
   /**

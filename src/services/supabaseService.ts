@@ -1,14 +1,11 @@
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import { CONFIG } from "../config";
+import { SupabaseClient } from "@supabase/supabase-js";
+import { createSupabaseClient } from "../lib/supabase.client";
 import { redisService } from "./redis.service";
 
 export class SupabaseService {
   private supabaseClient: SupabaseClient;
   constructor() {
-    this.supabaseClient = createClient(
-      CONFIG.supabase.supabaseUrl,
-      CONFIG.supabase.supabaseKey
-    );
+    this.supabaseClient = createSupabaseClient();
   }
 
   // ============ Resource Methods ============

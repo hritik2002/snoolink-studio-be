@@ -1,5 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
-import { CONFIG } from "../config";
+import { createSupabaseClient } from "../lib/supabase.client";
 
 const BATCH_SIZE = 50;
 const FLUSH_MS = 2500;
@@ -21,10 +20,7 @@ interface BufferedEvent {
 class AnalyticsService {
   private buffer: BufferedEvent[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
-  private supabase = createClient(
-    CONFIG.supabase.supabaseUrl,
-    CONFIG.supabase.supabaseKey
-  );
+  private supabase = createSupabaseClient();
 
   /** Enqueue an event. Flush is scheduled by size or interval. */
   track(

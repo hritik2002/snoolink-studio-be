@@ -1,5 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
-import { CONFIG } from "../config";
+import { createSupabaseClient } from "../lib/supabase.client";
 
 const MAX_ROWS = 50000;
 
@@ -10,10 +9,7 @@ type Row = { user_id: string; event_name: string; created_at: string; properties
  * Uses service role (bypasses RLS). Call only after requireAdmin.
  */
 class AdminAnalyticsService {
-  private supabase = createClient(
-    CONFIG.supabase.supabaseUrl,
-    CONFIG.supabase.supabaseKey
-  );
+  private supabase = createSupabaseClient();
 
   private async fetchEvents(start?: Date, end?: Date): Promise<Row[]> {
     let q = this.supabase

@@ -1,5 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
-import { CONFIG } from "../config";
+import { createSupabaseClient } from "../lib/supabase.client";
 
 /**
  * OpenAI Pricing (as of 2024)
@@ -77,10 +76,7 @@ export class CostTrackingService {
   private supabaseClient;
 
   constructor() {
-    this.supabaseClient = createClient(
-      CONFIG.supabase.supabaseUrl,
-      CONFIG.supabase.supabaseKey
-    );
+    this.supabaseClient = createSupabaseClient();
   }
 
   /**

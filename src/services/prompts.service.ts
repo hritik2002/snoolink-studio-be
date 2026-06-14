@@ -1,5 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
-import { CONFIG } from "../config";
+import { createSupabaseClient } from "../lib/supabase.client";
 
 export interface PromptRow {
   id: string;
@@ -21,10 +20,7 @@ export function isAdmin(email: string | undefined): boolean {
 }
 
 export class PromptsService {
-  private supabase = createClient(
-    CONFIG.supabase.supabaseUrl,
-    CONFIG.supabase.supabaseKey
-  );
+  private supabase = createSupabaseClient();
 
   async list(): Promise<PromptRow[]> {
     const { data, error } = await this.supabase

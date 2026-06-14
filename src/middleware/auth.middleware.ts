@@ -1,12 +1,8 @@
 import type { Request, Response, NextFunction } from "express";
-import { createClient } from "@supabase/supabase-js";
-import { CONFIG } from "../config";
+import { createSupabaseClient } from "../lib/supabase.client";
 import { isAdmin } from "../services/prompts.service";
 
-const supabase = createClient(
-  CONFIG.supabase.supabaseUrl,
-  CONFIG.supabase.supabaseKey
-);
+const supabase = createSupabaseClient();
 
 declare global {
   namespace Express {
