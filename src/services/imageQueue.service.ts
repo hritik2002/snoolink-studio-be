@@ -1,4 +1,4 @@
-import { Queue } from "bullmq";
+import { Queue, type QueueOptions } from "bullmq";
 import { redisService } from "./redis.service";
 import { v4 as uuidv4 } from "uuid";
 
@@ -15,8 +15,8 @@ class ImageQueueService {
   private queue: Queue<ImageJobData>;
 
   constructor() {
-    this.queue = new Queue<ImageJobData>("image-processing", {
-      connection: redisService.getClient(),
+    const queueOptions: QueueOptions = {
+      connection: redisService.getBullMqConnection(),
       defaultJobOptions: {
         attempts: 3,
         backoff: {
@@ -31,7 +31,12 @@ class ImageQueueService {
           age: 86400, // Keep failed jobs for 24 hours
         },
       },
-    });
+    };
+    if (redisService.shouldSkipBullMqVersionCheck()) {
+      queueOptions.skipVersionCheck = true;
+    }
+
+    this.queue = new Queue<ImageJobData>("image-processing", queueOptions);
 
     this.queue.on("error", (error) => {
       console.error("Image queue error:", error);

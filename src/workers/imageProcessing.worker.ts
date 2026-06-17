@@ -1,4 +1,4 @@
-import { Worker, Job } from "bullmq";
+import { Worker, Job, type WorkerOptions } from "bullmq";
 import fs from "fs";
 import { redisService } from "../services/redis.service";
 import { ResourceProcessingService } from "../services/resourceProcessing.service";
@@ -18,19 +18,24 @@ class ImageProcessingWorker {
     this.uploadsService = new UploadsService();
     this.supabaseService = new SupabaseService();
 
+    const workerOptions: WorkerOptions = {
+      connection: redisService.getBullMqConnection(),
+      concurrency: CONFIG.queue.imageProcessing.concurrency,
+      limiter: {
+        max: 50, // Max 50 jobs
+        duration: 1000, // Per second (to rate limit OpenAI API calls)
+      },
+    };
+    if (redisService.shouldSkipBullMqVersionCheck()) {
+      workerOptions.skipVersionCheck = true;
+    }
+
     this.worker = new Worker<ImageJobData>(
       "image-processing",
       async (job: Job<ImageJobData>) => {
         return await this.processImage(job);
       },
-      {
-        connection: redisService.getClient(),
-        concurrency: CONFIG.queue.imageProcessing.concurrency,
-        limiter: {
-          max: 50, // Max 50 jobs
-          duration: 1000, // Per second (to rate limit OpenAI API calls)
-        },
-      }
+      workerOptions
     );
 
     this.setupEventHandlers();

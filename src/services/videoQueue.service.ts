@@ -1,4 +1,4 @@
-import { Queue } from "bullmq";
+import { Queue, type QueueOptions } from "bullmq";
 import { redisService } from "./redis.service";
 import { v4 as uuidv4 } from "uuid";
 
@@ -19,8 +19,8 @@ class VideoQueueService {
   private queue: Queue<VideoJobData>;
 
   constructor() {
-    this.queue = new Queue<VideoJobData>("video-processing", {
-      connection: redisService.getClient(),
+    const queueOptions: QueueOptions = {
+      connection: redisService.getBullMqConnection(),
       defaultJobOptions: {
         attempts: 3,
         backoff: {
@@ -35,7 +35,12 @@ class VideoQueueService {
           age: 86400, // Keep failed jobs for 24 hours
         },
       },
-    });
+    };
+    if (redisService.shouldSkipBullMqVersionCheck()) {
+      queueOptions.skipVersionCheck = true;
+    }
+
+    this.queue = new Queue<VideoJobData>("video-processing", queueOptions);
 
     this.queue.on("error", (error) => {
       console.error("Video queue error:", error);

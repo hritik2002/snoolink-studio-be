@@ -1,9 +1,93 @@
 import Redis from "ioredis";
+import type { ConnectionOptions } from "bullmq";
 import { CONFIG } from "../config";
 
 class RedisService {
   private client: Redis | null = null;
   private readonly DEFAULT_TTL = 3600; // 1 hour in seconds
+  private evictionPolicyReady = false;
+  private skipBullMqVersionCheck = false;
+
+  /**
+   * BullMQ requires Redis maxmemory-policy=noeviction so queue keys are not evicted.
+   * Attempts CONFIG SET on startup; if the provider blocks it, enables skipVersionCheck
+   * and logs a single actionable warning instead of repeated BullMQ warnings.
+   */
+  async ensureEvictionPolicy(): Promise<void> {
+    if (this.evictionPolicyReady) return;
+
+    const client = this.getClient();
+    if (client.status !== "ready") {
+      await new Promise<void>((resolve, reject) => {
+        if (client.status === "ready") {
+          resolve();
+          return;
+        }
+        const onReady = () => {
+          cleanup();
+          resolve();
+        };
+        const onError = (err: Error) => {
+          cleanup();
+          reject(err);
+        };
+        const cleanup = () => {
+          client.off("ready", onReady);
+          client.off("error", onError);
+        };
+        client.once("ready", onReady);
+        client.once("error", onError);
+      });
+    }
+
+    try {
+      const result = (await client.config("GET", "maxmemory-policy")) as string[];
+      const current = result?.[1];
+
+      if (current === "noeviction") {
+        console.log("Redis maxmemory-policy: noeviction");
+        this.evictionPolicyReady = true;
+        return;
+      }
+
+      try {
+        await client.config("SET", "maxmemory-policy", "noeviction");
+        console.log(
+          `Redis maxmemory-policy updated${current ? ` from ${current}` : ""} to noeviction`
+        );
+        this.evictionPolicyReady = true;
+        return;
+      } catch {
+        this.skipBullMqVersionCheck = true;
+        console.warn(
+          `Redis maxmemory-policy is "${current ?? "unknown"}" (expected "noeviction"). ` +
+            "Could not change it via CONFIG SET. On Railway, open your Redis service settings " +
+            "and set maxmemory-policy to noeviction, or redeploy Redis with that policy. " +
+            "Until then, BullMQ job data may be evicted under memory pressure."
+        );
+      }
+    } catch (err) {
+      this.skipBullMqVersionCheck = true;
+      console.warn(
+        "Could not read Redis maxmemory-policy:",
+        err instanceof Error ? err.message : err
+      );
+    }
+
+    this.evictionPolicyReady = true;
+  }
+
+  /** When true, pass skipVersionCheck to BullMQ (after ensureEvictionPolicy). */
+  shouldSkipBullMqVersionCheck(): boolean {
+    return this.skipBullMqVersionCheck;
+  }
+
+  /**
+   * BullMQ bundles its own ioredis types; cast the shared client for queue/worker options.
+   */
+  getBullMqConnection(): ConnectionOptions {
+    return this.getClient() as unknown as ConnectionOptions;
+  }
 
   getClient(): Redis {
     if (!this.client) {

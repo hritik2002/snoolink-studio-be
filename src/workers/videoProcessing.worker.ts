@@ -1,4 +1,4 @@
-import { Worker, Job } from "bullmq";
+import { Worker, Job, type WorkerOptions } from "bullmq";
 import { redisService } from "../services/redis.service";
 import { VideoProcessingService } from "../services/videoProcessing.service";
 import { SupabaseService } from "../services/supabaseService";
@@ -15,19 +15,24 @@ class VideoProcessingWorker {
     this.videoProcessingService = new VideoProcessingService();
     this.supabaseService = new SupabaseService();
 
+    const workerOptions: WorkerOptions = {
+      connection: redisService.getBullMqConnection(),
+      concurrency: CONFIG.queue.videoProcessing.concurrency,
+      limiter: {
+        max: 10, // Max 10 jobs per duration (videos are more resource-intensive)
+        duration: 1000, // Per second (to rate limit API calls)
+      },
+    };
+    if (redisService.shouldSkipBullMqVersionCheck()) {
+      workerOptions.skipVersionCheck = true;
+    }
+
     this.worker = new Worker<VideoJobData>(
       "video-processing",
       async (job: Job<VideoJobData>) => {
         return await this.processVideo(job);
       },
-      {
-        connection: redisService.getClient(),
-        concurrency: CONFIG.queue.videoProcessing.concurrency,
-        limiter: {
-          max: 10, // Max 10 jobs per duration (videos are more resource-intensive)
-          duration: 1000, // Per second (to rate limit API calls)
-        },
-      }
+      workerOptions
     );
 
     this.setupEventHandlers();
