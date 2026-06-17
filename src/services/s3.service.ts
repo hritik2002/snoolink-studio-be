@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ObjectCannedACL } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { CONFIG } from "../config/index";
 import fs from "fs";
@@ -36,7 +36,6 @@ export default async function uploadToS3(
       Key: key,
       Body: fileBuffer,
       ContentType: resourceType === "image" ? "image/png" : "video/mp4",
-      ACL: ObjectCannedACL.public_read,
     });
 
     await s3Client.send(command);
@@ -69,7 +68,6 @@ export async function generatePresignedUploadUrl(
       Bucket: CONFIG.s3.bucketName,
       Key: key,
       ContentType: contentType,
-      ACL: ObjectCannedACL.public_read,
     });
 
     const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn });
