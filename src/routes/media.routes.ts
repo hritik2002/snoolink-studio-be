@@ -377,7 +377,7 @@ router.get("/search-videos", async (req, res) => {
  *   - topK: Number of results (optional, default 10)
  */
 router.get("/search-videos-collections", async (req, res) => {
-  const { query, collections, topK, expandQuery: expandQueryParam } = req.query;
+  const { query, collections, topK, expandQuery: expandQueryParam, minScore: minScoreParam } = req.query;
   if (!query || typeof query !== "string" || !query.trim()) {
     return res.status(400).json({
       success: false,
@@ -391,6 +391,11 @@ router.get("/search-videos-collections", async (req, res) => {
     });
   }
   const expandQuery = expandQueryParam !== "false" && expandQueryParam !== "0";
+  let minScoreOverride: number | undefined;
+  if (minScoreParam != null && minScoreParam !== "") {
+    const n = parseFloat(minScoreParam as string);
+    if (!Number.isNaN(n)) minScoreOverride = Math.max(0, Math.min(1, n));
+  }
   try {
     const userId = req.user!.id;
     let collectionNames: string[];
@@ -428,7 +433,8 @@ router.get("/search-videos-collections", async (req, res) => {
       topK ? parseInt(topK as string, 10) : 10,
       "/api/media/search-videos-collections",
       req.method,
-      expandQuery
+      expandQuery,
+      minScoreOverride
     );
     const data = results as { results?: Record<string, unknown>; expandedQuery?: string | null };
     const videoCount = data?.results && typeof data.results === "object" ? Object.keys(data.results).length : 0;

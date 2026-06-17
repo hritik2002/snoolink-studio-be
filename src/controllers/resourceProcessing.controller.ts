@@ -607,7 +607,8 @@ class ResourceProcessingController {
     topK: number = 10,
     endpoint: string = "/api/media/search-videos-collections",
     method: string = "GET",
-    expandQuery: boolean = true
+    expandQuery: boolean = true,
+    minScoreOverride?: number
   ) {
     // Early return for empty collections
     if (collections.length === 0) {
@@ -624,6 +625,10 @@ class ResourceProcessingController {
     let error: string | null = null;
 
     const searchSettings = await this.getSearchSettings(userId);
+    const minScore =
+      minScoreOverride != null && !Number.isNaN(minScoreOverride)
+        ? Math.max(0, Math.min(1, minScoreOverride))
+        : searchSettings.minScore;
     // Check cache FIRST with original query (before expansion)
     const cacheKey = this.getSearchCacheKey(
       userId,
@@ -632,7 +637,7 @@ class ResourceProcessingController {
       topK,
       "video",
       expandQuery,
-      searchSettings.minScore
+      minScore
     );
 
     // Check for pending request (deduplication)
@@ -673,7 +678,7 @@ class ResourceProcessingController {
             userId,
             collections,
             topK,
-            searchSettings.minScore
+            minScore
           );
 
         const enrichedResults: Record<string, any> = {};
