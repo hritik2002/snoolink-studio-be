@@ -31,7 +31,7 @@ router.get("/", async (req: Request, res: Response) => {
 router.post("/", async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
-    const { name } = req.body;
+    const { name, description, collectionType, settings, segmentationConfig } = req.body;
 
     if (!name || typeof name !== "string" || name.trim().length === 0) {
       return res.status(400).json({ success: false, error: "Collection name is required" });
@@ -44,8 +44,27 @@ router.post("/", async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: "Collection name too long (max 100 characters)" });
     }
 
-    const collection = await supabaseService.createCollection(userId, trimmedName);
-    analyticsService.track(userId, "collection_created", { name: trimmedName }, "server");
+    const validTypes = ["media_descriptions", "entities", "face_analysis"];
+    const type =
+      typeof collectionType === "string" && validTypes.includes(collectionType)
+        ? collectionType
+        : "media_descriptions";
+
+    const collection = await supabaseService.createCollection(userId, trimmedName, {
+      description: typeof description === "string" ? description.trim() : undefined,
+      collectionType: type,
+      settings: settings && typeof settings === "object" ? settings : {},
+      segmentationConfig:
+        segmentationConfig && typeof segmentationConfig === "object"
+          ? segmentationConfig
+          : null,
+    });
+    analyticsService.track(
+      userId,
+      "collection_created",
+      { name: trimmedName, collectionType: type },
+      "server"
+    );
     return res.status(201).json({ success: true, data: collection });
   } catch (error: any) {
     console.error("Error creating collection:", error);
@@ -83,21 +102,37 @@ router.patch("/:name", async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
     const oldName = decodeURIComponent(req.params.name);
-    const { name: newName } = req.body;
+    const { name: newName, description, collectionType, settings, segmentationConfig } = req.body;
 
-    if (!newName || typeof newName !== "string" || newName.trim().length === 0) {
-      return res.status(400).json({ success: false, error: "New collection name is required" });
+    if (newName !== undefined) {
+      if (typeof newName !== "string" || newName.trim().length === 0) {
+        return res.status(400).json({ success: false, error: "New collection name is required" });
+      }
+
+      const result = await supabaseService.renameCollection(
+        userId,
+        oldName,
+        newName.trim()
+      );
+
+      return res.json({ success: true, data: result });
     }
 
-    const result = await supabaseService.renameCollection(
-      userId,
-      oldName,
-      newName.trim()
-    );
+    const metadata = await supabaseService.updateCollectionMetadata(userId, oldName, {
+      description: typeof description === "string" ? description : description === null ? null : undefined,
+      collectionType: typeof collectionType === "string" ? collectionType : undefined,
+      settings: settings && typeof settings === "object" ? settings : undefined,
+      segmentationConfig:
+        segmentationConfig === null
+          ? null
+          : segmentationConfig && typeof segmentationConfig === "object"
+            ? segmentationConfig
+            : undefined,
+    });
 
-    return res.json({ success: true, data: result });
+    return res.json({ success: true, data: metadata });
   } catch (error: any) {
-    console.error("Error renaming collection:", error);
+    console.error("Error updating collection:", error);
     return res.status(500).json({ success: false, error: error.message });
   }
 });

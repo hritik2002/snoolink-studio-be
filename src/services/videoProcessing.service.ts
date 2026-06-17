@@ -4,6 +4,15 @@ import { v4 as uuidv4 } from "uuid";
 import { OpenAI } from "openai";
 import { CONFIG } from "../config";
 import { DESCRIBE_VIDEO_FRAME_PROMPT } from "../utils/constants";
+import {
+  CollectionProcessingConfig,
+  DEFAULT_MEDIA_DESCRIPTIONS_SETTINGS,
+  EntitySettings,
+  FaceAnalysisSettings,
+  MediaDescriptionsSettings,
+  SegmentationConfig,
+} from "../types/collectionProcessing";
+import { buildCollectionProcessingConfig, getEffectiveSegmentation } from "../utils/collectionConfig";
 import { VectorDBService } from "./vectordb.service";
 import { createCollectionNamespace } from "../utils/namespace";
 import { CostTrackingService } from "./costTracking.service";
@@ -311,6 +320,173 @@ export class VideoProcessingService {
     }
 
     return chunks;
+  }
+
+  /**
+   * Build fixed segments from collection segmentation config
+   */
+  private buildSegmentationScenes(
+    duration: number,
+    segmentation: SegmentationConfig
+  ): Array<{ start: number; end: number; index: number }> {
+    const scenes: Array<{ start: number; end: number; index: number }> = [];
+    const segmentDuration = Math.max(2, segmentation.segmentDurationSeconds);
+    const overlap = Math.min(segmentation.overlapSeconds, segmentDuration - 1);
+    const step = Math.max(1, segmentDuration - overlap);
+    let start = 0;
+    let index = 0;
+
+    while (start < duration) {
+      const end = Math.min(start + segmentDuration, duration);
+      scenes.push({ start, end, index: index++ });
+      if (end >= duration) break;
+      start += step;
+    }
+
+    console.log(
+      `Built ${scenes.length} segments (${segmentDuration}s duration, ${overlap}s overlap)`
+    );
+    return scenes;
+  }
+
+  /**
+   * Extract audio track from video for transcription
+   */
+  private async extractAudioFromVideo(videoPath: string): Promise<string> {
+    const audioPath = path.join(this.tempDir, `audio_${uuidv4()}.mp3`);
+    await exec(
+      `ffmpeg -y -i "${videoPath}" -vn -acodec libmp3lame -q:a 2 "${audioPath}"`
+    );
+    return audioPath;
+  }
+
+  /**
+   * Transcribe audio file with Whisper
+   */
+  private async transcribeAudioFile(
+    audioPath: string,
+    userId: string,
+    metadata?: { videoUrl?: string; collectionName?: string }
+  ): Promise<string> {
+    const startTime = Date.now();
+    try {
+      const transcription = await this.openaiClient.audio.transcriptions.create({
+        file: fs.createReadStream(audioPath) as unknown as File,
+        model: "whisper-1",
+      });
+
+      await this.costTracker.trackChatCompletion(
+        {
+          userId,
+          apiType: "chat_completion",
+          model: "whisper-1",
+          operationType: "video_transcription",
+          endpoint: "video_processing",
+          context: "Full video transcription for collection processing",
+          metadata: {
+            video_url: metadata?.videoUrl,
+            collection_name: metadata?.collectionName,
+          },
+          responseTimeMs: Date.now() - startTime,
+          success: true,
+        },
+        undefined
+      );
+
+      return transcription.text?.trim() || "";
+    } catch (error) {
+      console.error("Whisper transcription failed:", error);
+      return "";
+    }
+  }
+
+  /**
+   * Transcribe a segment of video audio
+   */
+  private async transcribeVideoSegment(
+    videoPath: string,
+    start: number,
+    end: number,
+    userId: string,
+    metadata?: { videoUrl?: string; collectionName?: string }
+  ): Promise<string> {
+    const audioPath = path.join(this.tempDir, `seg_audio_${uuidv4()}.mp3`);
+    try {
+      const duration = Math.max(0.5, end - start);
+      await exec(
+        `ffmpeg -y -ss ${start.toFixed(3)} -i "${videoPath}" -t ${duration.toFixed(3)} -vn -acodec libmp3lame -q:a 2 "${audioPath}"`
+      );
+      return await this.transcribeAudioFile(audioPath, userId, metadata);
+    } catch (error) {
+      console.error(`Segment transcription failed (${start}-${end}s):`, error);
+      return "";
+    } finally {
+      try {
+        fs.unlinkSync(audioPath);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  /**
+   * Resolve scenes/segments based on collection processing config
+   */
+  private async resolveScenesForConfig(
+    videoPath: string,
+    duration: number,
+    config: CollectionProcessingConfig
+  ): Promise<Array<{ start: number; end: number; index: number }>> {
+    const segmentation = getEffectiveSegmentation(config);
+
+    if (
+      config.collectionType === "entities" ||
+      config.collectionType === "face_analysis" ||
+      config.segmentation
+    ) {
+      return this.buildSegmentationScenes(duration, segmentation);
+    }
+
+    return this.detectScenes(videoPath);
+  }
+
+  /**
+   * Extract entities from segment content using collection prompt + schema
+   */
+  private async extractEntitiesFromSegment(
+    segmentContent: string,
+    settings: EntitySettings,
+    userId: string,
+    metadata?: { videoUrl?: string; collectionName?: string; chunkIndex?: number }
+  ): Promise<string> {
+    const systemPrompt =
+      settings.prompt?.trim() ||
+      "Extract structured entities from the following video segment content.";
+    const schema =
+      settings.schema?.trim() || "{}";
+
+    const prompt = `${systemPrompt}
+
+Return valid JSON matching this schema:
+${schema}
+
+Segment content:
+${segmentContent}
+
+Respond with JSON only.`;
+
+    try {
+      const response = await this.openaiClient.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+      });
+
+      return response.choices[0].message.content?.trim() || "{}";
+    } catch (error) {
+      console.error("Entity extraction failed:", error);
+      return JSON.stringify({ error: "entity_extraction_failed", content: segmentContent.slice(0, 500) });
+    }
   }
 
   /**
@@ -730,13 +906,25 @@ Style:
     vectorDB: VectorDBService,
     userId: string,
     collectionName?: string,
-    ingestionPrompt?: string
+    ingestionPrompt?: string,
+    options?: {
+      enableVisual?: boolean;
+      enableSummary?: boolean;
+      transcriptSnippet?: string;
+      customVisionPrompt?: string;
+      maxFrameWidth?: number;
+      skipVectorIndex?: boolean;
+    }
   ): Promise<{ chunkId: string; summary: string; start: number; end: number }> {
     const { start, end, index } = scene;
+    const enableVisual = options?.enableVisual !== false;
+    const enableSummary = options?.enableSummary !== false;
     
     // Step 1: Extract keyframes from scene (with timestamps for moment-level indexing)
     const framesDir = path.join(tempDir, `scene_${index}_frames`);
-    const keyframeData = await this.extractKeyframesFromScene(videoPath, scene, framesDir);
+    const keyframeData = enableVisual
+      ? await this.extractKeyframesFromScene(videoPath, scene, framesDir)
+      : [];
 
     // Step 2: Upload keyframes to S3, get GPT descriptions, build { desc, time }[]
     const frameDescriptions: { desc: string; time: number }[] = [];
@@ -746,7 +934,7 @@ Style:
         videoUrl,
         chunkIndex: index,
         collectionName,
-      }, ingestionPrompt);
+      }, options?.customVisionPrompt || ingestionPrompt);
       frameDescriptions.push({ desc: description, time: kf.time });
       await this.deleteFrameFromS3(key);
       try { fs.unlinkSync(kf.path); } catch { /* ignore */ }
@@ -755,13 +943,32 @@ Style:
     try { fs.rmSync(framesDir, { recursive: true, force: true }); } catch (e) { console.error(`Error removing frames dir:`, e); }
 
     // Step 3: Generate scene-level summary from frame descriptions
-    const summary = await this.generateClipSummary(
-      frameDescriptions.map((f) => f.desc),
-      userId,
-      { videoUrl, chunkIndex: index, collectionName },
-      ingestionPrompt
-    );
+    let summary: string;
+    if (frameDescriptions.length > 0) {
+      if (enableSummary) {
+        summary = await this.generateClipSummary(
+          frameDescriptions.map((f) => f.desc),
+          userId,
+          { videoUrl, chunkIndex: index, collectionName },
+          ingestionPrompt
+        );
+      } else {
+        summary = frameDescriptions.map((f) => f.desc).join(" ");
+      }
+    } else if (options?.transcriptSnippet) {
+      summary = options.transcriptSnippet;
+    } else {
+      summary = `Video segment ${start.toFixed(1)}s - ${end.toFixed(1)}s`;
+    }
+
+    if (options?.transcriptSnippet && frameDescriptions.length > 0) {
+      summary = `${summary}\n\nSpeech: ${options.transcriptSnippet}`;
+    }
     console.log(`Clip summary: ${summary.substring(0, 150)}...`);
+
+    if (options?.skipVectorIndex) {
+      return { chunkId: `scene-${index}`, summary, start, end };
+    }
 
     // Step 4: Embed and store — scene-level + optional keyframe-level + optional dense segments
 
@@ -827,7 +1034,8 @@ Style:
     videoUrl: string, 
     userId: string,
     collectionName: string = "Default",
-    ingestionPrompt?: string
+    ingestionPrompt?: string,
+    processingConfig?: CollectionProcessingConfig
   ): Promise<{
     videoUrl: string;
     chunksIndexed: number;
@@ -835,33 +1043,275 @@ Style:
     duration?: number;
     resolution?: string;
   }> {
-    // Use collection-based namespace for indexing videos
+    const config =
+      processingConfig ??
+      buildCollectionProcessingConfig({
+        collectionType: "media_descriptions",
+        settings: DEFAULT_MEDIA_DESCRIPTIONS_SETTINGS,
+        ingestionPrompt,
+      });
+
+    if (config.collectionType === "entities") {
+      return this.processEntitiesCollection(videoUrl, userId, collectionName, config);
+    }
+    if (config.collectionType === "face_analysis") {
+      return this.processFaceAnalysisCollection(videoUrl, userId, collectionName, config);
+    }
+    return this.processMediaDescriptionsCollection(
+      videoUrl,
+      userId,
+      collectionName,
+      config
+    );
+  }
+
+  private async processMediaDescriptionsCollection(
+    videoUrl: string,
+    userId: string,
+    collectionName: string,
+    config: CollectionProcessingConfig
+  ) {
+    const settings = config.settings as MediaDescriptionsSettings;
     const namespace = createCollectionNamespace(userId, collectionName, "video");
     const vectorDB = new VectorDBService(namespace, userId);
-
-    // Step 1: Download video from URL
     const videoPath = await this.downloadVideo(videoUrl);
 
     try {
-      // Extract video metadata (duration and resolution)
       const [duration, resolution] = await Promise.all([
-        this.getVideoDuration(videoPath).catch((err) => {
-          console.error("Error getting video duration:", err);
-          return undefined;
-        }),
-        this.getVideoResolution(videoPath).catch((err) => {
-          console.error("Error getting video resolution:", err);
-          return undefined;
-        }),
+        this.getVideoDuration(videoPath).catch(() => undefined),
+        this.getVideoResolution(videoPath).catch(() => undefined),
       ]);
 
-      console.log(`Video metadata - Duration: ${duration}s, Resolution: ${resolution}`);
+      let fullTranscript = "";
+      if (settings.enableSpeech) {
+        const audioPath = await this.extractAudioFromVideo(videoPath);
+        try {
+          fullTranscript = await this.transcribeAudioFile(audioPath, userId, {
+            videoUrl,
+            collectionName,
+          });
+        } finally {
+          try {
+            fs.unlinkSync(audioPath);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
 
-      // Step 2: Detect scenes using FFmpeg scene detection
-      const scenes = await this.detectScenes(videoPath);
-      console.log(`\nDetected ${scenes.length} scenes (reduced from ~${Math.ceil((duration || 0) / CHUNK_SIZE_SECONDS)} fixed chunks)`);
+      const scenes = duration
+        ? await this.resolveScenesForConfig(videoPath, duration, config)
+        : await this.detectScenes(videoPath);
 
-      // Step 3: Process each scene
+      const results: Array<{ chunkId: string; summary: string; start: number; end: number }> = [];
+      const tempScenesDir = path.join(this.tempDir, uuidv4());
+      const useTranscriptOnly =
+        !settings.enableVisualSceneDescription && settings.enableSpeech;
+
+      for (const scene of scenes) {
+        try {
+          let transcriptSnippet = "";
+          if (settings.enableSpeech) {
+            if (useTranscriptOnly) {
+              transcriptSnippet = await this.transcribeVideoSegment(
+                videoPath,
+                scene.start,
+                scene.end,
+                userId,
+                { videoUrl, collectionName }
+              );
+            } else if (fullTranscript) {
+              transcriptSnippet = fullTranscript;
+            }
+          }
+
+          const result = await this.processScene(
+            scene,
+            videoUrl,
+            videoPath,
+            tempScenesDir,
+            vectorDB,
+            userId,
+            collectionName,
+            config.ingestionPrompt,
+            {
+              enableVisual: settings.enableVisualSceneDescription,
+              enableSummary: settings.enableSummary,
+              transcriptSnippet: transcriptSnippet || undefined,
+              customVisionPrompt: settings.enableAudioDescription
+                ? `${config.ingestionPrompt || DESCRIBE_VIDEO_FRAME_PROMPT}\n\nAlso describe any audio cues if visible on screen.`
+                : config.ingestionPrompt,
+            }
+          );
+          results.push(result);
+        } catch (error) {
+          console.error(`Error processing scene ${scene.index}:`, error);
+        }
+      }
+
+      try {
+        fs.rmSync(tempScenesDir, { recursive: true, force: true });
+      } catch (error) {
+        console.error("Error cleaning up scenes directory:", error);
+      }
+
+      return {
+        videoUrl,
+        chunksIndexed: results.length,
+        results,
+        duration,
+        resolution: resolution || undefined,
+      };
+    } finally {
+      try {
+        fs.unlinkSync(videoPath);
+      } catch (error) {
+        console.error("Error deleting downloaded video:", error);
+      }
+    }
+  }
+
+  private async processEntitiesCollection(
+    videoUrl: string,
+    userId: string,
+    collectionName: string,
+    config: CollectionProcessingConfig
+  ) {
+    const settings = config.settings as EntitySettings;
+    const namespace = createCollectionNamespace(userId, collectionName, "video");
+    const vectorDB = new VectorDBService(namespace, userId);
+    const videoPath = await this.downloadVideo(videoUrl);
+
+    try {
+      const [duration, resolution] = await Promise.all([
+        this.getVideoDuration(videoPath).catch(() => undefined),
+        this.getVideoResolution(videoPath).catch(() => undefined),
+      ]);
+
+      if (!duration) throw new Error("Could not determine video duration");
+
+      const scenes = await this.resolveScenesForConfig(videoPath, duration, config);
+      const results: Array<{ chunkId: string; summary: string; start: number; end: number }> = [];
+      const tempScenesDir = path.join(this.tempDir, uuidv4());
+
+      for (const scene of scenes) {
+        try {
+          let segmentContent = "";
+
+          if (settings.enableTranscriptMode) {
+            segmentContent = await this.transcribeVideoSegment(
+              videoPath,
+              scene.start,
+              scene.end,
+              userId,
+              { videoUrl, collectionName }
+            );
+          } else {
+            const sceneResult = await this.processScene(
+              scene,
+              videoUrl,
+              videoPath,
+              tempScenesDir,
+              vectorDB,
+              userId,
+              collectionName,
+              config.ingestionPrompt,
+              { enableSummary: false, skipVectorIndex: true }
+            );
+            segmentContent = sceneResult.summary;
+          }
+
+          const entityJson = await this.extractEntitiesFromSegment(
+            segmentContent,
+            settings,
+            userId,
+            { videoUrl, collectionName, chunkIndex: scene.index }
+          );
+
+          const chunkId = await vectorDB.upsert(entityJson, {
+            videoUrl,
+            startTime: scene.start.toFixed(3),
+            endTime: scene.end.toFixed(3),
+            resourceType: "video",
+            segmentType: "entity",
+            text: entityJson,
+          });
+
+          results.push({
+            chunkId,
+            summary: entityJson,
+            start: scene.start,
+            end: scene.end,
+          });
+        } catch (error) {
+          console.error(`Error processing entity segment ${scene.index}:`, error);
+        }
+      }
+
+      if (settings.enableVideoLevelEntities && results.length > 0) {
+        const combined = results.map((r) => r.summary).join("\n");
+        const videoLevel = await this.extractEntitiesFromSegment(
+          combined,
+          settings,
+          userId,
+          { videoUrl, collectionName }
+        );
+        await vectorDB.upsert(videoLevel, {
+          videoUrl,
+          startTime: "0.000",
+          endTime: duration.toFixed(3),
+          resourceType: "video",
+          segmentType: "entity_video_level",
+          text: videoLevel,
+        });
+      }
+
+      try {
+        fs.rmSync(tempScenesDir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+
+      return {
+        videoUrl,
+        chunksIndexed: results.length,
+        results,
+        duration,
+        resolution: resolution || undefined,
+      };
+    } finally {
+      try {
+        fs.unlinkSync(videoPath);
+      } catch (error) {
+        console.error("Error deleting downloaded video:", error);
+      }
+    }
+  }
+
+  private async processFaceAnalysisCollection(
+    videoUrl: string,
+    userId: string,
+    collectionName: string,
+    config: CollectionProcessingConfig
+  ) {
+    const settings = config.settings as FaceAnalysisSettings;
+    const facePrompt =
+      config.ingestionPrompt ||
+      "Describe all visible faces in this frame. Include approximate count, visible attributes, and distinguishing features. Be factual. Do not speculate about identity.";
+
+    const namespace = createCollectionNamespace(userId, collectionName, "video");
+    const vectorDB = new VectorDBService(namespace, userId);
+    const videoPath = await this.downloadVideo(videoUrl);
+
+    try {
+      const [duration, resolution] = await Promise.all([
+        this.getVideoDuration(videoPath).catch(() => undefined),
+        this.getVideoResolution(videoPath).catch(() => undefined),
+      ]);
+
+      if (!duration) throw new Error("Could not determine video duration");
+
+      const scenes = await this.resolveScenesForConfig(videoPath, duration, config);
       const results: Array<{ chunkId: string; summary: string; start: number; end: number }> = [];
       const tempScenesDir = path.join(this.tempDir, uuidv4());
 
@@ -875,22 +1325,24 @@ Style:
             vectorDB,
             userId,
             collectionName,
-            ingestionPrompt
+            facePrompt,
+            {
+              enableSummary: true,
+              customVisionPrompt: facePrompt,
+              maxFrameWidth: settings.maxWidth,
+            }
           );
           results.push(result);
         } catch (error) {
-          console.error(`Error processing scene ${scene.index}:`, error);
+          console.error(`Error processing face segment ${scene.index}:`, error);
         }
       }
 
-      // Clean up scenes directory
       try {
         fs.rmSync(tempScenesDir, { recursive: true, force: true });
-      } catch (error) {
-        console.error("Error cleaning up scenes directory:", error);
+      } catch {
+        /* ignore */
       }
-
-      console.log("\n✅ Video indexing complete!");
 
       return {
         videoUrl,
@@ -900,7 +1352,6 @@ Style:
         resolution: resolution || undefined,
       };
     } finally {
-      // Clean up downloaded video
       try {
         fs.unlinkSync(videoPath);
       } catch (error) {

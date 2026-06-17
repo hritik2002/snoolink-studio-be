@@ -10,7 +10,11 @@
         "build": "echo 'No build step needed - using tsx for runtime'",
         "test": "echo \"Error: no test specified\" && exit 1",
         "migrate:namespaces": "tsx src/scripts/migrate-pinecone-namespaces.ts",
-        "migrate:namespaces:dry": "DRY_RUN=true tsx src/scripts/migrate-pinecone-namespaces.ts"
+        "migrate:namespaces:dry": "DRY_RUN=true tsx src/scripts/migrate-pinecone-namespaces.ts",
+        "migrate:collection-metadata": "tsx src/scripts/run-collection-metadata-migration.ts",
+        "migrate:collection-metadata:verify": "tsx src/scripts/verify-collection-metadata-migration.ts",
+        "reset:all": "tsx src/scripts/reset-all.ts",
+        "reset:all:dry": "RESET_CONFIRM=yes tsx src/scripts/reset-all.ts -- --dry-run"
     },
     "keywords": [
         "snoolink.studio",
@@ -46,7 +50,8 @@
     "devDependencies": {
         "@types/multer": "^2.0.0",
         "@types/ws": "^8.18.1",
-        "nodemon": "^3.0.1"
+        "nodemon": "^3.0.1",
+        "pg": "^8.21.0"
     },
     "engines": {
         "node": ">=20.0.0"

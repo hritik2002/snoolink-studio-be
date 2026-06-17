@@ -450,7 +450,16 @@ export class SupabaseService {
   /**
    * Create a new empty collection
    */
-  async createCollection(userId: string, collectionName: string) {
+  async createCollection(
+    userId: string,
+    collectionName: string,
+    options?: {
+      description?: string;
+      collectionType?: string;
+      settings?: Record<string, unknown>;
+      segmentationConfig?: Record<string, unknown> | null;
+    }
+  ) {
     // Check if collection already exists
     const { data: existing } = await this.supabaseClient
       .from("collection_metadata")
@@ -475,26 +484,83 @@ export class SupabaseService {
       throw new Error(`Collection "${collectionName}" already exists`);
     }
 
-    // Create the collection metadata entry
+    const insertPayload: Record<string, unknown> = {
+      user_id: userId,
+      collection_name: collectionName,
+    };
+
+    if (options?.description) {
+      insertPayload.description = options.description;
+    }
+    if (options?.collectionType) {
+      insertPayload.collection_type = options.collectionType;
+    }
+    if (options?.settings) {
+      insertPayload.settings = options.settings;
+    }
+    if (options?.segmentationConfig) {
+      insertPayload.segmentation_config = options.segmentationConfig;
+    }
+
     const { data, error } = await this.supabaseClient
       .from("collection_metadata")
-      .insert({
-        user_id: userId,
-        collection_name: collectionName,
-      })
+      .insert(insertPayload)
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      const missingExtendedColumns =
+        error.message?.includes("collection_type") ||
+        error.message?.includes("settings") ||
+        error.message?.includes("description");
+
+      if (missingExtendedColumns && Object.keys(insertPayload).length > 2) {
+        const { data: fallbackData, error: fallbackError } = await this.supabaseClient
+          .from("collection_metadata")
+          .insert({
+            user_id: userId,
+            collection_name: collectionName,
+          })
+          .select()
+          .single();
+
+        if (fallbackError) throw fallbackError;
+
+        await redisService.delete(`collections:${userId}:list`);
+
+        return {
+          id: String(fallbackData.id),
+          name: collectionName,
+          description: options?.description ?? null,
+          collectionType: options?.collectionType ?? "media_descriptions",
+          settings: options?.settings ?? {},
+          segmentationConfig: options?.segmentationConfig ?? null,
+          pineconeNamespace: this.getPineconeNamespace(userId, collectionName),
+          imageCount: 0,
+          videoCount: 0,
+          fileCount: 0,
+          thumbnailUrl: null,
+          createdAt: fallbackData.created_at,
+        };
+      }
+
+      throw error;
+    }
 
     // Invalidate collections list cache
     await redisService.delete(`collections:${userId}:list`);
 
     return {
+      id: String(data.id),
       name: collectionName,
+      description: data.description ?? options?.description ?? null,
+      collectionType: data.collection_type ?? options?.collectionType ?? "media_descriptions",
+      settings: data.settings ?? options?.settings ?? {},
+      segmentationConfig: data.segmentation_config ?? options?.segmentationConfig ?? null,
       pineconeNamespace: this.getPineconeNamespace(userId, collectionName),
       imageCount: 0,
       videoCount: 0,
+      fileCount: 0,
       thumbnailUrl: null,
       createdAt: data.created_at,
     };
@@ -517,11 +583,24 @@ export class SupabaseService {
     // Get collections from metadata table (includes empty collections)
     const { data: metadataCollections, error: metaError } = await this.supabaseClient
       .from("collection_metadata")
-      .select("collection_name, created_at")
+      .select("id, collection_name, created_at, description, collection_type, settings, segmentation_config")
       .eq("user_id", userId);
 
+    let resolvedMetadata = metadataCollections;
+
     if (metaError) {
-      console.warn("collection_metadata table may not exist yet:", metaError.message);
+      console.warn("collection_metadata extended columns may not exist yet:", metaError.message);
+      const { data: fallbackMeta } = await this.supabaseClient
+        .from("collection_metadata")
+        .select("id, collection_name, created_at")
+        .eq("user_id", userId);
+      resolvedMetadata = fallbackMeta?.map((meta) => ({
+        ...meta,
+        description: null,
+        collection_type: "media_descriptions",
+        settings: {},
+        segmentation_config: null,
+      })) ?? null;
     }
 
     // Get resources for counting
@@ -534,20 +613,26 @@ export class SupabaseService {
 
     // Group by collection_name and compute counts
     const collectionMap = new Map<string, {
+      id: string | null;
       imageCount: number;
       videoCount: number;
       thumbnailUrl: string | null;
       createdAt: string | null;
+      description: string | null;
+      collectionType: string;
     }>();
 
     // First, add all collections from metadata (including empty ones)
-    if (metadataCollections) {
-      for (const meta of metadataCollections) {
+    if (resolvedMetadata) {
+      for (const meta of resolvedMetadata) {
         collectionMap.set(meta.collection_name, {
+          id: String(meta.id),
           imageCount: 0,
           videoCount: 0,
           thumbnailUrl: null,
           createdAt: meta.created_at,
+          description: meta.description ?? null,
+          collectionType: meta.collection_type ?? "media_descriptions",
         });
       }
     }
@@ -555,10 +640,13 @@ export class SupabaseService {
     // Then count resources
     for (const row of data) {
       const existing = collectionMap.get(row.collection_name) || {
+        id: null,
         imageCount: 0,
         videoCount: 0,
         thumbnailUrl: null,
         createdAt: null,
+        description: null,
+        collectionType: "media_descriptions",
       };
 
       if (row.resource_type === "image") {
@@ -576,17 +664,113 @@ export class SupabaseService {
 
     // Convert to array
     const collections = Array.from(collectionMap.entries()).map(([name, stats]) => ({
+      id: stats.id ?? name,
       name,
+      description: stats.description,
+      collectionType: stats.collectionType,
       pineconeNamespace: this.getPineconeNamespace(userId, name),
       imageCount: stats.imageCount,
       videoCount: stats.videoCount,
+      fileCount: stats.imageCount + stats.videoCount,
       thumbnailUrl: stats.thumbnailUrl,
+      createdAt: stats.createdAt,
     }));
 
     // Cache the result (30 minutes TTL)
     await redisService.set(cacheKey, collections, 1800);
 
     return collections;
+  }
+
+  /**
+   * Get collection metadata (type, settings, segmentation) by name
+   */
+  async getCollectionMetadata(userId: string, collectionName: string) {
+    const { data, error } = await this.supabaseClient
+      .from("collection_metadata")
+      .select("id, collection_name, description, collection_type, settings, segmentation_config, created_at")
+      .eq("user_id", userId)
+      .eq("collection_name", collectionName)
+      .maybeSingle();
+
+    if (error) {
+      const { data: fallback, error: fallbackError } = await this.supabaseClient
+        .from("collection_metadata")
+        .select("id, collection_name, created_at")
+        .eq("user_id", userId)
+        .eq("collection_name", collectionName)
+        .maybeSingle();
+
+      if (fallbackError) throw fallbackError;
+      if (!fallback) return null;
+
+      return {
+        id: String(fallback.id),
+        name: fallback.collection_name,
+        description: null,
+        collectionType: "media_descriptions",
+        settings: {},
+        segmentationConfig: null,
+        createdAt: fallback.created_at,
+      };
+    }
+
+    if (!data) return null;
+
+    return {
+      id: String(data.id),
+      name: data.collection_name,
+      description: data.description ?? null,
+      collectionType: data.collection_type ?? "media_descriptions",
+      settings: data.settings ?? {},
+      segmentationConfig: data.segmentation_config ?? null,
+      createdAt: data.created_at,
+    };
+  }
+
+  /**
+   * Update collection metadata fields
+   */
+  async updateCollectionMetadata(
+    userId: string,
+    collectionName: string,
+    updates: {
+      description?: string | null;
+      collectionType?: string;
+      settings?: Record<string, unknown>;
+      segmentationConfig?: Record<string, unknown> | null;
+    }
+  ) {
+    const payload: Record<string, unknown> = {};
+    if (updates.description !== undefined) payload.description = updates.description;
+    if (updates.collectionType) payload.collection_type = updates.collectionType;
+    if (updates.settings) payload.settings = updates.settings;
+    if (updates.segmentationConfig !== undefined) {
+      payload.segmentation_config = updates.segmentationConfig;
+    }
+
+    const { data, error } = await this.supabaseClient
+      .from("collection_metadata")
+      .update(payload)
+      .eq("user_id", userId)
+      .eq("collection_name", collectionName)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    await redisService.delete(`collections:${userId}:list`);
+    await redisService.delete(`collections:${userId}:${collectionName}`);
+
+    return {
+      id: String(data.id),
+      name: data.collection_name,
+      description: data.description ?? null,
+      collectionType: data.collection_type ?? "media_descriptions",
+      settings: data.settings ?? {},
+      segmentationConfig: data.segmentation_config ?? null,
+      createdAt: data.created_at,
+    };
   }
 
   /**
@@ -612,14 +796,24 @@ export class SupabaseService {
 
     const imageCount = data.filter(r => r.resource_type === "image").length;
     const videoCount = data.filter(r => r.resource_type === "video").length;
+    const fileCount = imageCount + videoCount;
     const firstImage = data.find(r => r.resource_type === "image");
 
+    const metadata = await this.getCollectionMetadata(userId, collectionName);
+
     const result = {
+      id: metadata?.id ?? collectionName,
       name: collectionName,
+      description: metadata?.description ?? null,
+      collectionType: metadata?.collectionType ?? "media_descriptions",
+      settings: metadata?.settings ?? {},
+      segmentationConfig: metadata?.segmentationConfig ?? null,
       pineconeNamespace: this.getPineconeNamespace(userId, collectionName),
       imageCount,
       videoCount,
+      fileCount,
       thumbnailUrl: firstImage?.resource_url || null,
+      createdAt: metadata?.createdAt ?? null,
     };
 
     // Cache the result (30 minutes TTL)
@@ -644,6 +838,12 @@ export class SupabaseService {
 
     if (error) throw error;
 
+    await this.supabaseClient
+      .from("collection_metadata")
+      .update({ collection_name: newName })
+      .eq("user_id", userId)
+      .eq("collection_name", oldName);
+
     // Invalidate cache for both old and new collection names
     await redisService.invalidateCollectionCache(userId, oldName);
     await redisService.invalidateCollectionCache(userId, newName);
@@ -667,6 +867,12 @@ export class SupabaseService {
       .eq("collection_name", collectionName);
 
     if (error) throw error;
+
+    await this.supabaseClient
+      .from("collection_metadata")
+      .delete()
+      .eq("user_id", userId)
+      .eq("collection_name", collectionName);
 
     // Invalidate cache for this collection
     await redisService.invalidateCollectionCache(userId, collectionName);

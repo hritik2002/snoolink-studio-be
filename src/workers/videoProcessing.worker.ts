@@ -56,7 +56,7 @@ class VideoProcessingWorker {
   }
 
   private async processVideo(job: Job<VideoJobData>) {
-    const { videoUrl, userId, jobId, collectionName = "Default", ingestionPrompt } = job.data;
+    const { videoUrl, userId, jobId, collectionName = "Default", ingestionPrompt, collectionProcessing } = job.data;
 
     try {
       // Update progress: starting
@@ -67,7 +67,8 @@ class VideoProcessingWorker {
         videoUrl,
         userId,
         collectionName,
-        ingestionPrompt
+        ingestionPrompt,
+        collectionProcessing
       );
 
       // Update progress: storing in Supabase

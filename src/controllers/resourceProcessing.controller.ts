@@ -7,6 +7,7 @@ import { videoQueueService } from "../services/videoQueue.service";
 import { loggingService } from "../services/logging.service";
 import { VideoProcessingService } from "../services/videoProcessing.service";
 import { redisService } from "../services/redis.service";
+import { buildCollectionProcessingConfig } from "../utils/collectionConfig";
 import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 
@@ -537,6 +538,23 @@ class ResourceProcessingController {
       // ignore; use default
     }
 
+    let collectionProcessing;
+    try {
+      const metadata = await this.supabaseService.getCollectionMetadata(
+        userId,
+        collectionName
+      );
+      collectionProcessing = buildCollectionProcessingConfig({
+        collectionType: metadata?.collectionType,
+        settings: metadata?.settings,
+        segmentationConfig: metadata?.segmentationConfig,
+        ingestionPrompt,
+      });
+    } catch (error) {
+      console.warn("Could not load collection metadata, using defaults:", error);
+      collectionProcessing = buildCollectionProcessingConfig({ ingestionPrompt });
+    }
+
     const jobId = uuidv4();
     const job = await videoQueueService.addVideoJob({
       videoUrl,
@@ -544,6 +562,7 @@ class ResourceProcessingController {
       jobId,
       collectionName,
       ingestionPrompt,
+      collectionProcessing,
     });
 
     return {

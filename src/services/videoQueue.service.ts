@@ -2,6 +2,8 @@ import { Queue } from "bullmq";
 import { redisService } from "./redis.service";
 import { v4 as uuidv4 } from "uuid";
 
+import { CollectionProcessingConfig } from "../types/collectionProcessing";
+
 export interface VideoJobData {
   videoUrl: string;
   userId: string;
@@ -9,6 +11,8 @@ export interface VideoJobData {
   collectionName?: string;
   /** Custom ingestion prompt from user's selected model; resolved at queue time. */
   ingestionPrompt?: string;
+  /** Collection type + settings resolved at queue time. */
+  collectionProcessing?: CollectionProcessingConfig;
 }
 
 class VideoQueueService {
@@ -247,7 +251,7 @@ class VideoQueueService {
           const state = await job.getState();
           if (state === "failed" && job.data) {
             // Store the video URL, user ID, and options before removing
-            const { videoUrl, userId, collectionName, ingestionPrompt } = job.data;
+            const { videoUrl, userId, collectionName, ingestionPrompt, collectionProcessing } = job.data;
             
             // Remove the failed job
             await job.remove();
@@ -259,6 +263,7 @@ class VideoQueueService {
               jobId: uuidv4(), // Generate a new jobId for the re-queued job
               collectionName,
               ingestionPrompt,
+              collectionProcessing,
             });
             
             results.push({
