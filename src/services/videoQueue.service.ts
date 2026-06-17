@@ -134,6 +134,7 @@ class VideoQueueService {
       id: string;
       videoUrl: string;
       jobId: string;
+      collectionName?: string;
       state: string;
       progress?: number;
       timestamp?: number;
@@ -142,6 +143,7 @@ class VideoQueueService {
       id: string;
       videoUrl: string;
       jobId: string;
+      collectionName?: string;
       failedReason?: string;
       timestamp?: number;
     }>;
@@ -150,6 +152,7 @@ class VideoQueueService {
       id: string;
       videoUrl: string;
       jobId: string;
+      collectionName?: string;
       state: string;
       progress?: number;
       timestamp?: number;
@@ -158,6 +161,7 @@ class VideoQueueService {
       id: string;
       videoUrl: string;
       jobId: string;
+      collectionName?: string;
       failedReason?: string;
       timestamp?: number;
     }> = [];
@@ -172,6 +176,7 @@ class VideoQueueService {
             id: job.id || "",
             videoUrl: job.data.videoUrl,
             jobId: job.id || "", // Use BullMQ job ID for tracking
+            collectionName: job.data.collectionName || "Default",
             state: "active",
             progress: typeof job.progress === "number" ? job.progress : undefined,
             timestamp: job.timestamp,
@@ -187,6 +192,7 @@ class VideoQueueService {
             id: job.id || "",
             videoUrl: job.data.videoUrl,
             jobId: job.id || "", // Use BullMQ job ID for tracking
+            collectionName: job.data.collectionName || "Default",
             state: "waiting",
             timestamp: job.timestamp,
           });
@@ -201,6 +207,7 @@ class VideoQueueService {
             id: job.id || "",
             videoUrl: job.data.videoUrl,
             jobId: job.id || "", // Use BullMQ job ID for removal/requeue operations
+            collectionName: job.data.collectionName || "Default",
             failedReason: job.failedReason || undefined,
             timestamp: job.timestamp,
           });

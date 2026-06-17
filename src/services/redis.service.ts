@@ -151,7 +151,12 @@ class RedisService {
     const patterns = [
       `collections:${userId}:${collectionName}:*`,
       `resources:${userId}:${collectionName}:*`,
+      // Collection detail (`getCollectionResourcesPaginated`)
       `resources:paginated:${userId}:${collectionName}:*`,
+      // Media resources API with collection filter (`getResourcesPaginated`)
+      `resources:${userId}:paginated:${collectionName}:*`,
+      // Global Files page — all collections (`getResourcesPaginated` without collection)
+      `resources:${userId}:paginated:all:*`,
       `collections:${userId}:list`,
     ];
 
